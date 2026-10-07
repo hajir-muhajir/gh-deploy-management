@@ -5,17 +5,7 @@ import type {
   Release,
   Repo,
   Workflow,
-  WorkflowRun,
 } from "../types";
-
-export const DUMMY_TOKEN = "ghp_8fK2xQ9mVt4LpZ7cR1sN6wY3hJ0dE5aBuG";
-
-export const REPOS: Repo[] = [
-  { owner: "indotaichen", name: "web-app", ini: "WA", ver: [2, 4, 1], visible: true },
-  { owner: "indotaichen", name: "api-gateway", ini: "AG", ver: [1, 9, 3], visible: true },
-  { owner: "indotaichen", name: "mobile-app", ini: "MA", ver: [3, 1, 2], visible: true },
-  { owner: "indotaichen", name: "infra", ini: "IN", ver: [0, 12, 4], visible: false },
-];
 
 export const WORKFLOWS: Workflow[] = [
   {
@@ -67,8 +57,24 @@ export const CHECK_STATES: Record<CheckStatus, { color: string; label: string }>
   pending: { color: "bg-orange-dot", label: "Checks running" },
 };
 
+/**
+ * Stable per-repo seed so the placeholder Releases content differs between
+ * repositories and stays the same across renders. Replaced once that tab is
+ * wired to the real API.
+ */
+function seedOf(fullName: string): number {
+  let hash = 0;
+  for (const char of fullName) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % 1000;
+}
+
+function versionOf(repo: Repo): [number, number, number] {
+  const seed = seedOf(repo.fullName);
+  return [1 + (seed % 3), 1 + (seed % 9), seed % 10];
+}
+
 export function makeReleases(repo: Repo): Release[] {
-  const [M, m, p] = repo.ver;
+  const [M, m, p] = versionOf(repo);
   return [
     { tag: `v${M}.${m}.${p}`, name: "Faster cold starts", when: "4d ago", author: "rizky", latest: true, notes: ["Lazy-load route bundles", "Warm caches on deploy", "Fix memory leak in session store"] },
     { tag: `v${M}.${m}.0`, name: "Workspace sharing", when: "Sep 26", author: "ayu", notes: ["Invite members by email", "Shared workspace settings"] },
@@ -78,26 +84,7 @@ export function makeReleases(repo: Repo): Release[] {
   ];
 }
 
-export function makeRuns(index: number, repo: Repo): WorkflowRun[] {
-  const b = 480 + index * 37;
-  return [
-    { wf: "Deploy", title: "Deploy to staging", branch: "main", n: b + 2, status: "running", pct: 38, ago: "started 1m ago", dur: "" },
-    { wf: "CI", title: "fix: token refresh race", branch: "fix/auth-refresh", n: b + 1, status: "failure", ago: "12m ago", dur: "3m 41s" },
-    { wf: "CI", title: "feat: workspace invites", branch: "feat/invites", n: b, status: "success", ago: "34m ago", dur: "4m 02s" },
-    { wf: "Release", title: `Release ${makeReleases(repo)[0].tag}`, branch: "main", n: b - 1, status: "success", ago: "4d ago", dur: "6m 18s" },
-    { wf: "Nightly build", title: "Nightly build", branch: "main", n: b - 2, status: "cancelled", ago: "5d ago", dur: "1m 10s" },
-    { wf: "CI", title: "chore: bump dependencies", branch: "renovate/all", n: b - 3, status: "success", ago: "6d ago", dur: "3m 55s" },
-  ];
-}
-
 /** Default input values for a workflow, keyed by input key. */
 export function defaultValues(workflow: Workflow): Record<string, InputValue> {
   return Object.fromEntries(workflow.inputs.map((i) => [i.key, i.def]));
-}
-
-/** `.github/workflows/<file>` for a workflow name, including runs not in WORKFLOWS (e.g. CI). */
-export function workflowFile(name: string): string {
-  if (name === "CI") return ".github/workflows/ci.yml";
-  const wf = WORKFLOWS.find((w) => w.name === name);
-  return `.github/workflows/${wf ? wf.file : "unknown.yml"}`;
 }

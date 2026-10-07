@@ -1,14 +1,17 @@
-export type RunStatus = "success" | "failure" | "running" | "queued" | "cancelled";
-
 export type CheckStatus = "success" | "failure" | "pending";
 
 export interface Repo {
   owner: string;
   name: string;
+  /** `owner/name` — the stable identity used as a key everywhere. */
+  fullName: string;
   /** Two-letter initials shown in the avatar tile. */
   ini: string;
-  /** [major, minor, patch] used to generate dummy releases. */
-  ver: [number, number, number];
+  defaultBranch: string;
+  private: boolean;
+  archived: boolean;
+  canPush: boolean;
+  /** Whether the repo appears in the header switcher. */
   visible: boolean;
 }
 
@@ -20,17 +23,6 @@ export interface Release {
   latest?: boolean;
   pre?: boolean;
   notes: string[];
-}
-
-export interface WorkflowRun {
-  wf: string;
-  title: string;
-  branch: string;
-  n: number;
-  status: RunStatus;
-  pct?: number;
-  ago: string;
-  dur: string;
 }
 
 export type WorkflowInput =

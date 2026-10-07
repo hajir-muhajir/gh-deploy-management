@@ -2,12 +2,14 @@ import clsx from "clsx";
 import { CheckIcon, PlayIcon } from "../icons";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { Toggle } from "../ui/Toggle";
-import { BRANCHES, WORKFLOWS } from "../../data/dummy";
+import { WORKFLOWS } from "../../data/dummy";
 import type { InputValue } from "../../types";
 
 interface RunTabProps {
   workflowIndex: number;
   branch: string;
+  /** Repo default branch first, then the placeholder branches. */
+  branches: string[];
   values: Record<string, InputValue>;
   onSelectWorkflow: (index: number) => void;
   onBranchChange: (branch: string) => void;
@@ -18,6 +20,7 @@ interface RunTabProps {
 export function RunTab({
   workflowIndex,
   branch,
+  branches,
   values,
   onSelectWorkflow,
   onBranchChange,
@@ -59,7 +62,7 @@ export function RunTab({
           onChange={(e) => onBranchChange(e.target.value)}
           className="rounded-md border-0 bg-fill px-2 py-[5px] font-mono text-xs text-fg"
         >
-          {BRANCHES.map((b) => (
+          {branches.map((b) => (
             <option key={b} value={b}>
               {b}
             </option>

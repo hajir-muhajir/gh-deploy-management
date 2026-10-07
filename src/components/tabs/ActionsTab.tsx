@@ -1,3 +1,5 @@
+import clsx from "clsx";
+import { useEffect, useRef, useState } from "react";
 import {
   CloseIcon,
   RefreshIcon,
@@ -5,16 +7,24 @@ import {
   RunFailureIcon,
   RunSuccessIcon,
 } from "../icons";
-import { IconButton } from "../ui/IconButton";
-import type { WorkflowRun } from "../../types";
+import type { ApiError, RunInfo, RunStatus } from "../../lib/github";
+import { estimateProgress, runDuration } from "../../lib/progress";
+import { formatDuration, relativeTime, secondsBetween } from "../../lib/time";
+
+/** How long the "Sure?" confirmation stays armed before reverting. */
+const CONFIRM_MS = 3000;
 
 interface ActionsTabProps {
-  runs: WorkflowRun[];
-  onCancel: (runNumber: number) => void;
-  onRerun: (runNumber: number) => void;
+  runs: RunInfo[];
+  loading: boolean;
+  error: ApiError | null;
+  onCancel: (runId: number) => Promise<void>;
+  onRerun: (runId: number) => Promise<void>;
+  /** Surfaces failures from cancel/re-run, which are easy to miss otherwise. */
+  onActionError: (message: string) => void;
 }
 
-function StatusIcon({ status }: { status: WorkflowRun["status"] }) {
+function StatusIcon({ status }: { status: RunStatus }) {
   switch (status) {
     case "success":
       return <RunSuccessIcon />;
@@ -31,24 +41,100 @@ function StatusIcon({ status }: { status: WorkflowRun["status"] }) {
   }
 }
 
-function rightLabel(run: WorkflowRun): string {
-  if (run.status === "running") return `${Math.round(run.pct ?? 0)}%`;
+/** Right-hand column: elapsed estimate while running, final duration once done. */
+function rightLabel(run: RunInfo, progress: number | null): string {
   if (run.status === "queued") return "Queued";
-  return run.dur;
+  if (run.status === "running") {
+    return progress === null ? formatDuration(secondsBetween(run.startedAt)) : `${progress}%`;
+  }
+  return formatDuration(runDuration(run));
 }
 
-export function ActionsTab({ runs, onCancel, onRerun }: ActionsTabProps) {
-  if (runs.length === 0) {
-    return <p className="px-3 py-4 text-xs text-fg2">No workflows selected.</p>;
+/**
+ * Cancel and re-run hit production CI, so the first click only arms the button
+ * and the second one sends it.
+ */
+function ConfirmButton({
+  title,
+  onConfirm,
+  children,
+}: {
+  title: string;
+  onConfirm: () => void;
+  children: React.ReactNode;
+}) {
+  const [armed, setArmed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
+  function onClick() {
+    if (armed) {
+      if (timer.current) clearTimeout(timer.current);
+      setArmed(false);
+      onConfirm();
+      return;
+    }
+    setArmed(true);
+    timer.current = setTimeout(() => setArmed(false), CONFIRM_MS);
   }
+
+  return (
+    <button
+      type="button"
+      title={armed ? `${title} — click again to confirm` : title}
+      aria-label={title}
+      onClick={onClick}
+      className={clsx(
+        "grid cursor-pointer place-items-center rounded-md border-0 p-0 transition-colors",
+        armed
+          ? "h-6 w-auto bg-red-dot px-1.5 text-[10px] font-semibold text-white"
+          : "h-6 w-6 bg-transparent text-fg2 hover:bg-fill hover:text-fg",
+      )}
+    >
+      {armed ? "Sure?" : children}
+    </button>
+  );
+}
+
+export function ActionsTab({
+  runs,
+  loading,
+  error,
+  onCancel,
+  onRerun,
+  onActionError,
+}: ActionsTabProps) {
+  if (loading && runs.length === 0) {
+    return <p className="px-3 py-4 text-xs text-fg2">Loading runs…</p>;
+  }
+
+  if (error) {
+    return <p className="px-3 py-4 text-xs text-red-dot">{error.message}</p>;
+  }
+
+  if (runs.length === 0) {
+    return <p className="px-3 py-4 text-xs text-fg2">No workflow runs to show.</p>;
+  }
+
+  const send = (action: (id: number) => Promise<void>, id: number) => {
+    void action(id).catch((caught) => {
+      const message =
+        caught && typeof caught === "object" && "message" in caught
+          ? String((caught as { message: unknown }).message)
+          : String(caught);
+      onActionError(message);
+    });
+  };
 
   return (
     <div className="px-1">
       {runs.map((run) => {
         const active = run.status === "running" || run.status === "queued";
+        const progress = estimateProgress(run, runs);
         return (
           <div
-            key={run.n}
+            key={run.id}
             className="flex items-start gap-2.5 rounded-lg px-2 py-[9px] hover:bg-hover"
           >
             <div className="mt-px grid h-4 w-4 flex-none place-items-center">
@@ -56,31 +142,46 @@ export function ActionsTab({ runs, onCancel, onRerun }: ActionsTabProps) {
             </div>
 
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <div className="truncate text-[13px] font-medium">{run.title}</div>
+              <a
+                href={run.htmlUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate text-[13px] font-medium text-fg no-underline hover:underline"
+                title={run.title}
+              >
+                {run.title || run.workflowName}
+              </a>
               <div className="truncate text-[11px] text-fg2">
-                {`${run.wf} #${run.n} · ${run.branch} · ${run.ago}`}
+                {`${run.workflowName} #${run.runNumber} · ${run.branch} · ${relativeTime(run.startedAt)}`}
               </div>
               {run.status === "running" && (
                 <div className="mt-[5px] h-[3px] overflow-hidden rounded-sm bg-fill">
-                  {/* The only inline style in the app: a continuous 0-100% value. */}
-                  <div
-                    className="h-full rounded-sm bg-orange-dot transition-[width] duration-700 ease-linear"
-                    style={{ width: `${Math.round(run.pct ?? 0)}%` }}
-                  />
+                  {progress === null ? (
+                    // No comparable history yet, so show motion instead of a figure.
+                    <div className="h-full w-1/3 animate-pulse rounded-sm bg-orange-dot" />
+                  ) : (
+                    /* The only inline style in the app: a continuous 0-100% value. */
+                    <div
+                      className="h-full rounded-sm bg-orange-dot transition-[width] duration-700 ease-linear"
+                      style={{ width: `${progress}%` }}
+                    />
+                  )}
                 </div>
               )}
             </div>
 
             <div className="flex flex-none items-center gap-1">
-              <span className="text-[11px] tabular-nums text-fg3">{rightLabel(run)}</span>
+              <span className="text-[11px] tabular-nums text-fg3">
+                {rightLabel(run, progress)}
+              </span>
               {active ? (
-                <IconButton size={24} title="Cancel run" onClick={() => onCancel(run.n)}>
+                <ConfirmButton title="Cancel run" onConfirm={() => send(onCancel, run.id)}>
                   <CloseIcon />
-                </IconButton>
+                </ConfirmButton>
               ) : (
-                <IconButton size={24} title="Re-run" onClick={() => onRerun(run.n)}>
+                <ConfirmButton title="Re-run" onConfirm={() => send(onRerun, run.id)}>
                   <RefreshIcon width="13" height="13" />
-                </IconButton>
+                </ConfirmButton>
               )}
             </div>
           </div>

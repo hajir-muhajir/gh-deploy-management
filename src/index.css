@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ── Design tokens (ported from "GitHub Tray Flyout - Tabs" design) ───────── */
+[data-theme] {
+  --wall: radial-gradient(520px 420px at 15% 20%, #dfe6f2, transparent 70%),
+          radial-gradient(480px 420px at 90% 85%, #ece4ef, transparent 70%), #f1f1f3;
+  --bg: rgba(246, 246, 248, 0.78);
+  --solid: #f6f6f8;
+  --card: rgba(255, 255, 255, 0.75);
+  --seg: #fff;
+  --fg: #1d1d1f;
+  --fg2: #6e6e73;
+  --fg3: #8e8e93;
+  --sep: rgba(0, 0, 0, 0.09);
+  --fill: rgba(118, 118, 128, 0.12);
+  --hover: rgba(0, 0, 0, 0.045);
+  --accent: #007aff;
+  --accentTint: rgba(0, 122, 255, 0.12);
+  --green: #1e7b34;
+  --greenDot: #34c759;
+  --greenTint: rgba(52, 199, 89, 0.15);
+  --redDot: #ff3b30;
+  --orange: #b25000;
+  --orangeDot: #ff9500;
+  --orangeTint: rgba(255, 149, 0, 0.15);
+  --bar: rgba(238, 238, 241, 0.88);
+  --shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 22px 50px -14px rgba(0, 0, 0, 0.3),
+            0 6px 16px -8px rgba(0, 0, 0, 0.14);
+  color: var(--fg);
+}
+
+[data-theme="dark"] {
+  --wall: radial-gradient(520px 420px at 15% 20%, #1c2436, transparent 70%),
+          radial-gradient(480px 420px at 90% 85%, #271f2e, transparent 70%), #121215;
+  --bg: rgba(40, 40, 44, 0.78);
+  --solid: #2a2a2e;
+  --card: rgba(255, 255, 255, 0.06);
+  --seg: #5a5a5f;
+  --fg: #f5f5f7;
+  --fg2: #a1a1a6;
+  --fg3: #8e8e93;
+  --sep: rgba(255, 255, 255, 0.1);
+  --fill: rgba(118, 118, 128, 0.26);
+  --hover: rgba(255, 255, 255, 0.06);
+  --accent: #0a84ff;
+  --accentTint: rgba(10, 132, 255, 0.2);
+  --green: #30d158;
+  --greenDot: #30d158;
+  --greenTint: rgba(48, 209, 88, 0.16);
+  --redDot: #ff453a;
+  --orange: #ffb340;
+  --orangeDot: #ff9f0a;
+  --orangeTint: rgba(255, 159, 10, 0.18);
+  --bar: rgba(30, 30, 33, 0.9);
+  --shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.13), 0 22px 50px -14px rgba(0, 0, 0, 0.65),
+            0 6px 16px -8px rgba(0, 0, 0, 0.4);
+}
+
+[data-accent="indigo"] {
+  --accent: #5856d6;
+  --accentTint: rgba(88, 86, 214, 0.13);
+}
+[data-theme="dark"][data-accent="indigo"] {
+  --accent: #7d7aff;
+  --accentTint: rgba(125, 122, 255, 0.2);
+}
+[data-accent="graphite"] {
+  --accent: #3a3a3c;
+  --accentTint: rgba(60, 60, 67, 0.1);
+}
+[data-theme="dark"][data-accent="graphite"] {
+  --accent: #c7c7cc;
+  --accentTint: rgba(199, 199, 204, 0.16);
+}
+
+[data-glass="off"] {
+  --bg: var(--solid);
+}
+
+/* ── Tailwind theme mapping ───────────────────────────────────────────────── */
+@theme inline {
+  --color-panel: var(--bg);
+  --color-fg: var(--fg);
+  --color-fg2: var(--fg2);
+  --color-fg3: var(--fg3);
+  --color-accent: var(--accent);
+  --color-accent-tint: var(--accentTint);
+  --color-card: var(--card);
+  --color-seg: var(--seg);
+  --color-fill: var(--fill);
+  --color-hover: var(--hover);
+  --color-sep: var(--sep);
+  --color-solid: var(--solid);
+  --color-bar: var(--bar);
+  --color-green: var(--green);
+  --color-green-dot: var(--greenDot);
+  --color-green-tint: var(--greenTint);
+  --color-red-dot: var(--redDot);
+  --color-orange: var(--orange);
+  --color-orange-dot: var(--orangeDot);
+  --color-orange-tint: var(--orangeTint);
+
+  --shadow-flyout: var(--shadow);
+  --shadow-seg: 0 1px 2px rgba(0, 0, 0, 0.14);
+  --shadow-knob: 0 1px 3px rgba(0, 0, 0, 0.25);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+               "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --animate-ghspin: ghspin 0.9s linear infinite;
+  --animate-ghturn: ghspin 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --wall carries a colour in its last layer, so it needs the `background`
+   shorthand rather than `background-image`. */
+@utility wallpaper {
+  background: var(--wall);
+}
+
+@keyframes ghspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    margin: 0;
+    height: 100%;
+  }
+  body {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  button,
+  select,
+  input {
+    font-family: inherit;
+  }
+}

@@ -1,50 +1,47 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useCallback, useState } from "react";
+import { PreviewBackdrop } from "./components/PreviewBackdrop";
+import { FlyoutPanel } from "./components/flyout/FlyoutPanel";
+import { useIsTauri } from "./hooks/useIsTauri";
+import { useTheme } from "./hooks/useTheme";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const theme = useTheme();
+  const isTauri = useIsTauri();
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  // Inside Tauri the OS shows/hides the window, so the panel is always "open".
+  const [open, setOpen] = useState(true);
+  const [badgeCount, setBadgeCount] = useState(0);
+
+  const onBadgeChange = useCallback((count: number) => setBadgeCount(count), []);
+
+  const panel = (
+    <FlyoutPanel
+      theme={theme}
+      open={isTauri || open}
+      anchored={!isTauri}
+      onBadgeChange={onBadgeChange}
+    />
+  );
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div
+      data-theme={theme.theme}
+      data-accent={theme.accent}
+      data-glass={isTauri ? "off" : "on"}
+      className="h-full w-full bg-solid font-sans text-[13px]"
+    >
+      {isTauri ? (
+        panel
+      ) : (
+        <PreviewBackdrop
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          badgeCount={badgeCount}
+        >
+          {panel}
+        </PreviewBackdrop>
+      )}
+    </div>
   );
 }
 

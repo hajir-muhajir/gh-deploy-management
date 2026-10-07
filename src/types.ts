@@ -1,5 +1,3 @@
-export type CheckStatus = "success" | "failure" | "pending";
-
 export interface Repo {
   owner: string;
   name: string;
@@ -13,17 +11,6 @@ export interface Repo {
   canPush: boolean;
   /** Whether the repo appears in the header switcher. */
   visible: boolean;
-}
-
-export interface PullRequest {
-  n: number;
-  title: string;
-  author: string;
-  head: string;
-  draft: boolean;
-  review: boolean;
-  checks: CheckStatus;
-  updated: string;
 }
 
 export type TabId = "releases" | "run" | "actions" | "prs";

@@ -125,6 +125,27 @@ export interface DispatchWorkflow {
   inputs: DispatchInput[];
 }
 
+/** Aggregate of the head commit's workflow runs; "none" means nothing ran. */
+export type CheckState = "success" | "failure" | "pending" | "none";
+
+export interface PullRequestInfo {
+  number: number;
+  title: string;
+  author: string;
+  headBranch: string;
+  draft: boolean;
+  /** Logins; compare against the token owner to find what awaits you. */
+  requestedReviewers: string[];
+  checks: CheckState;
+  updatedAt: string;
+  htmlUrl: string;
+}
+
+export interface PullRequestsPage {
+  pulls: PullRequestInfo[];
+  hasMore: boolean;
+}
+
 export interface ReposPage {
   repos: RepoInfo[];
   truncated: boolean;
@@ -197,6 +218,16 @@ export function listRuns(owner: string, name: string) {
 
 export function listReleases(owner: string, name: string) {
   return call<ReleasesPage>("github_list_releases", { owner, name });
+}
+
+/**
+ * Open pull requests with the state of their checks.
+ *
+ * Costs one request per pull request: `/pulls` carries no check state, and the
+ * only source that works for this token is the head commit's workflow runs.
+ */
+export function listPulls(owner: string, name: string) {
+  return call<PullRequestsPage>("github_list_pulls", { owner, name });
 }
 
 /**

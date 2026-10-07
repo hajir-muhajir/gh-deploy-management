@@ -10,8 +10,8 @@ use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt};
 
 use github::{
-    ApiError, DispatchWorkflow, GitHub, ReleasesPage, RepoInfo, ReposPage, RunInfo, TokenInfo,
-    WorkflowInfo,
+    ApiError, DispatchWorkflow, GitHub, PullRequestsPage, ReleasesPage, RepoInfo, ReposPage,
+    RunInfo, TokenInfo, WorkflowInfo,
 };
 
 const MAIN_WINDOW: &str = "main";
@@ -157,6 +157,11 @@ async fn github_list_releases(owner: String, name: String) -> Result<ReleasesPag
 }
 
 #[tauri::command]
+async fn github_list_pulls(owner: String, name: String) -> Result<PullRequestsPage, ApiError> {
+    client_from_keychain()?.list_pulls(&owner, &name).await
+}
+
+#[tauri::command]
 async fn github_list_dispatchable(
     owner: String,
     name: String,
@@ -203,6 +208,7 @@ pub fn run() {
             github_list_workflows,
             github_list_runs,
             github_list_releases,
+            github_list_pulls,
             github_list_dispatchable,
             github_dispatch_workflow,
             github_cancel_run,

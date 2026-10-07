@@ -11,11 +11,11 @@ import { PullRequestsTab } from "../tabs/PullRequestsTab";
 import { ReleasesTab } from "../tabs/ReleasesTab";
 import { RunTab } from "../tabs/RunTab";
 import { SettingsTab } from "../tabs/SettingsTab";
-import { PULL_REQUESTS } from "../../data/dummy";
 import * as api from "../../lib/github";
 import type { DispatchWorkflow } from "../../lib/github";
 import { useDispatchable } from "../../hooks/useDispatchable";
 import { useGitHubAuth } from "../../hooks/useGitHubAuth";
+import { usePulls } from "../../hooks/usePulls";
 import { useReleases } from "../../hooks/useReleases";
 import { useRepos } from "../../hooks/useRepos";
 import { useRuns } from "../../hooks/useRuns";
@@ -65,6 +65,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   const workflows = useWorkflows(activeFullName, connected);
   const runsState = useRuns(activeFullName, connected);
   const releases = useReleases(activeFullName, connected);
+  const pulls = usePulls(activeFullName, connected);
   // Lazy: one request per active workflow, so only while the tab is open.
   const dispatchable = useDispatchable(activeFullName, connected && view === "run");
 
@@ -86,7 +87,12 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   }, [authStatus, recheck, repo?.fullName]);
 
   const failingCount = runs.filter((r) => r.status === "failure").length;
-  const reviewCount = repo ? PULL_REQUESTS.filter((p) => p.review).length : 0;
+  // Only what is actually waiting on this account, so the tray badge means
+  // something: a PR with any reviewer requested would be mostly noise.
+  const viewerLogin = auth.info?.login ?? "";
+  const reviewCount = viewerLogin
+    ? pulls.pulls.filter((pr) => pr.requestedReviewers.includes(viewerLogin)).length
+    : 0;
 
   /**
    * Only the active repository's runs are fetched, so the switcher can only
@@ -223,6 +229,11 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
       case "prs":
         return (
           <PullRequestsTab
+            pulls={pulls.pulls}
+            hasMore={pulls.hasMore}
+            loading={pulls.loading}
+            error={pulls.error}
+            viewerLogin={viewerLogin}
             filter={prFilter}
             onFilterChange={setPrFilter}
             repoUrl={repoUrl ?? ""}
@@ -252,6 +263,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
             workflows.reload();
             runsState.refresh();
             releases.refresh();
+            pulls.refresh();
             // A no-op unless the Run tab is open; the hook is gated on that.
             dispatchable.reload();
           }}

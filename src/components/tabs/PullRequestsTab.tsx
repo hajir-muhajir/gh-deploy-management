@@ -1,28 +1,63 @@
 import clsx from "clsx";
-import { PullRequestIcon } from "../icons";
-import { CHECK_STATES, PULL_REQUESTS } from "../../data/dummy";
-import type { PrFilterId, PullRequest } from "../../types";
+import { ExternalLinkIcon, PullRequestIcon } from "../icons";
+import type { ApiError, CheckState, PullRequestInfo } from "../../lib/github";
+import { relativeTime } from "../../lib/time";
+import type { PrFilterId } from "../../types";
 
 interface PullRequestsTabProps {
+  pulls: PullRequestInfo[];
+  /** More open pull requests exist than the page on screen. */
+  hasMore: boolean;
+  loading: boolean;
+  error: ApiError | null;
+  /** The token owner's login; "Review" means requested from them. */
+  viewerLogin: string;
   filter: PrFilterId;
   onFilterChange: (filter: PrFilterId) => void;
   repoUrl: string;
 }
 
-const FILTERS: { id: PrFilterId; label: string; match: (pr: PullRequest) => boolean }[] = [
-  { id: "open", label: "Open", match: (p) => !p.draft },
-  { id: "draft", label: "Draft", match: (p) => p.draft },
-  { id: "review", label: "Review", match: (p) => p.review },
-];
+/** Dot colour token + label for an aggregated check state. */
+const CHECK_STATES: Record<CheckState, { color: string; label: string }> = {
+  success: { color: "bg-green-dot", label: "Checks passed" },
+  failure: { color: "bg-red-dot", label: "Checks failed" },
+  pending: { color: "bg-orange-dot", label: "Checks running" },
+  // Distinct from "running": a repository may simply have no CI on this branch,
+  // and the fixture skips two of the three runs on every pull request.
+  none: { color: "bg-fg3", label: "No checks" },
+};
 
-export function PullRequestsTab({ filter, onFilterChange, repoUrl }: PullRequestsTabProps) {
-  const active = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
-  const visible = PULL_REQUESTS.filter(active.match);
+export function PullRequestsTab({
+  pulls,
+  hasMore,
+  loading,
+  error,
+  viewerLogin,
+  filter,
+  onFilterChange,
+  repoUrl,
+}: PullRequestsTabProps) {
+  const filters: { id: PrFilterId; label: string; match: (pr: PullRequestInfo) => boolean }[] = [
+    { id: "open", label: "Open", match: (p) => !p.draft },
+    { id: "draft", label: "Draft", match: (p) => p.draft },
+    { id: "review", label: "Review", match: (p) => p.requestedReviewers.includes(viewerLogin) },
+  ];
+
+  if (loading && pulls.length === 0) {
+    return <p className="px-3 py-4 text-xs text-fg2">Loading pull requests…</p>;
+  }
+
+  if (error) {
+    return <p className="px-3 py-4 text-xs text-red-dot">{error.message}</p>;
+  }
+
+  const active = filters.find((f) => f.id === filter) ?? filters[0];
+  const visible = pulls.filter(active.match);
 
   return (
     <div className="px-1">
       <div className="flex gap-1.5 px-1.5 pb-2 pt-0.5">
-        {FILTERS.map((f) => {
+        {filters.map((f) => {
           const on = f.id === filter;
           return (
             <button
@@ -35,7 +70,9 @@ export function PullRequestsTab({ filter, onFilterChange, repoUrl }: PullRequest
               )}
             >
               {f.label}
-              <span className="tabular-nums opacity-65">{PULL_REQUESTS.filter(f.match).length}</span>
+              {/* Counted over the page that was fetched, not every open PR:
+                  REST gives no total without walking all the pages. */}
+              <span className="tabular-nums opacity-65">{pulls.filter(f.match).length}</span>
             </button>
           );
         })}
@@ -47,8 +84,8 @@ export function PullRequestsTab({ filter, onFilterChange, repoUrl }: PullRequest
         const check = CHECK_STATES[pr.checks];
         return (
           <a
-            key={pr.n}
-            href={`${repoUrl}/pull/${pr.n}`}
+            key={pr.number}
+            href={pr.htmlUrl}
             target="_blank"
             rel="noreferrer"
             className="flex gap-2.5 rounded-lg px-2 py-[9px] text-fg no-underline hover:bg-hover"
@@ -59,20 +96,34 @@ export function PullRequestsTab({ filter, onFilterChange, repoUrl }: PullRequest
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <div className="truncate text-[13px] font-medium">{pr.title}</div>
               <div className="truncate text-[11px] text-fg2">
-                {`${pr.author} · ${pr.head} · ${pr.updated}`}
+                {`${pr.author} · ${pr.headBranch} · ${relativeTime(pr.updatedAt)}`}
               </div>
               <div className="mt-[3px] flex items-center gap-2 text-[11px] text-fg2">
                 <span className="flex items-center gap-1">
                   <span className={clsx("h-1.5 w-1.5 rounded-full", check.color)} />
                   {check.label}
                 </span>
-                {pr.review && <span className="font-medium text-accent">Review requested</span>}
+                {pr.requestedReviewers.includes(viewerLogin) && (
+                  <span className="font-medium text-accent">Review requested</span>
+                )}
               </div>
             </div>
-            <span className="flex-none text-[11px] tabular-nums text-fg3">{`#${pr.n}`}</span>
+            <span className="flex-none text-[11px] tabular-nums text-fg3">{`#${pr.number}`}</span>
           </a>
         );
       })}
+
+      {hasMore && (
+        <a
+          href={`${repoUrl}/pulls`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 flex items-center justify-center gap-1.5 rounded-lg border-t-[0.5px] border-sep px-2 py-3 text-[12px] font-medium text-accent no-underline hover:bg-hover"
+        >
+          View all pull requests on GitHub
+          <ExternalLinkIcon width="11" height="11" strokeWidth="1.6" />
+        </a>
+      )}
     </div>
   );
 }

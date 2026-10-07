@@ -24,6 +24,10 @@ const RUNS_PER_PAGE: usize = 20;
 /// The Releases tab shows the most recent page and links out for the rest.
 const RELEASES_PER_PAGE: usize = 20;
 
+/// Each pull request costs a further request for its check state, so the page
+/// size is also the request budget for one refresh of the PRs tab.
+const PULLS_PER_PAGE: usize = 20;
+
 // ── Errors ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -212,6 +216,48 @@ pub struct DispatchWorkflow {
     pub name: String,
     pub path: String,
     pub inputs: Vec<DispatchInput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestInfo {
+    pub number: u64,
+    pub title: String,
+    pub author: String,
+    pub head_branch: String,
+    pub draft: bool,
+    /// Logins only; the UI compares them against the token's own account.
+    pub requested_reviewers: Vec<String>,
+    /// Derived from the head commit's runs — see `aggregate_checks`.
+    pub checks: &'static str,
+    pub updated_at: String,
+    pub html_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestsPage {
+    pub pulls: Vec<PullRequestInfo>,
+    pub has_more: bool,
+}
+
+/// Boils a head commit's workflow runs down to one state for the PR row.
+///
+/// The statuses are the output of `run_status`, so "cancelled" also covers
+/// skipped runs — and this repository skips two of the three runs on every PR.
+/// Treating that as trouble would mark healthy PRs red, hence the "none" case.
+fn aggregate_checks(statuses: &[&str]) -> &'static str {
+    // A failure outranks work still in flight: it is the part that needs acting on.
+    if statuses.contains(&"failure") {
+        return "failure";
+    }
+    if statuses.iter().any(|s| *s == "running" || *s == "queued") {
+        return "pending";
+    }
+    if statuses.contains(&"success") {
+        return "success";
+    }
+    "none"
 }
 
 /// Reads a workflow's `workflow_dispatch` trigger out of its YAML source.
@@ -425,6 +471,27 @@ struct RawRelease {
     author: Option<RawActor>,
     published_at: Option<String>,
     created_at: String,
+    html_url: String,
+}
+
+#[derive(Deserialize)]
+struct RawHead {
+    #[serde(default)]
+    r#ref: String,
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct RawPull {
+    number: u64,
+    title: String,
+    user: Option<RawActor>,
+    head: RawHead,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    requested_reviewers: Vec<RawActor>,
+    updated_at: String,
     html_url: String,
 }
 
@@ -700,6 +767,75 @@ impl GitHub {
         mark_latest(&mut releases);
 
         Ok(ReleasesPage { releases, has_more })
+    }
+
+    /// Open pull requests, newest activity first, with the state of the checks
+    /// on each one.
+    ///
+    /// The checks cost one request per PR. `/pulls` carries no check state, the
+    /// Checks API answers 403 for this token, and the legacy Statuses API is
+    /// empty for this repository — it reports `pending` with zero statuses,
+    /// which would paint every green PR as still running. Workflow runs for the
+    /// head commit are the only source that is both available and truthful.
+    pub async fn list_pulls(&self, owner: &str, name: &str) -> Result<PullRequestsPage, ApiError> {
+        let response = self
+            .get(&format!(
+                "/repos/{owner}/{name}/pulls?state=open&sort=updated&direction=desc&per_page={PULLS_PER_PAGE}"
+            ))
+            .await?;
+        if !response.status().is_success() {
+            return Err(error_from(response).await);
+        }
+
+        let has_more = next_page_url(&response).is_some();
+        let raw: Vec<RawPull> = response.json().await.map_err(ApiError::network)?;
+
+        let mut pulls = Vec::with_capacity(raw.len());
+        for pull in raw {
+            pulls.push(PullRequestInfo {
+                number: pull.number,
+                title: pull.title,
+                author: pull.user.map(|u| u.login).unwrap_or_default(),
+                head_branch: pull.head.r#ref,
+                draft: pull.draft,
+                requested_reviewers: pull.requested_reviewers.into_iter().map(|r| r.login).collect(),
+                // A PR whose runs cannot be read reports "no checks" rather than
+                // sinking the whole list.
+                checks: self.checks_for(owner, name, &pull.head.sha).await.unwrap_or("none"),
+                updated_at: pull.updated_at,
+                html_url: pull.html_url,
+            });
+        }
+
+        Ok(PullRequestsPage { pulls, has_more })
+    }
+
+    async fn checks_for(
+        &self,
+        owner: &str,
+        name: &str,
+        head_sha: &str,
+    ) -> Result<&'static str, ApiError> {
+        let response = self
+            .get(&format!(
+                "/repos/{owner}/{name}/actions/runs?head_sha={head_sha}&per_page={RUNS_PER_PAGE}"
+            ))
+            .await?;
+        if !response.status().is_success() {
+            return Err(error_from(response).await);
+        }
+        let list: RawRunList = response.json().await.map_err(ApiError::network)?;
+        let statuses: Vec<&'static str> = list
+            .workflow_runs
+            .iter()
+            .map(|run| {
+                run_status(
+                    run.status.as_deref().unwrap_or("completed"),
+                    run.conclusion.as_deref(),
+                )
+            })
+            .collect();
+        Ok(aggregate_checks(&statuses))
     }
 
     /// Reads one file from the default branch as plain text. `vnd.github.raw`
@@ -1230,6 +1366,77 @@ on:
     }
 
     #[test]
+    fn aggregates_check_states_by_severity() {
+        // A failure is what needs acting on, even while other runs continue.
+        assert_eq!(aggregate_checks(&["success", "running", "failure"]), "failure");
+        assert_eq!(aggregate_checks(&["success", "queued"]), "pending");
+        assert_eq!(aggregate_checks(&["success", "success"]), "success");
+        // The exact shape every PR in the fixture repo produces: one real run
+        // plus two skipped ones, which `run_status` reports as cancelled.
+        assert_eq!(aggregate_checks(&["cancelled", "cancelled", "success"]), "success");
+    }
+
+    #[test]
+    fn reports_no_checks_when_nothing_ran() {
+        assert_eq!(aggregate_checks(&[]), "none", "a PR with no CI at all");
+        assert_eq!(
+            aggregate_checks(&["cancelled", "cancelled"]),
+            "none",
+            "every run skipped is not a failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn lists_real_open_pull_requests() {
+        let Some(token) = token() else {
+            eprintln!("skipped: no GITHUB_TOKEN");
+            return;
+        };
+        let (owner, name) = split(FIXTURE);
+        let page = GitHub::new(&token).unwrap().list_pulls(owner, name).await.unwrap();
+
+        assert!(!page.pulls.is_empty(), "fixture repo has open pull requests");
+        assert!(page.pulls.len() <= PULLS_PER_PAGE, "must respect the page cap");
+
+        for pull in &page.pulls {
+            assert!(!pull.html_url.is_empty(), "PR #{} has no link", pull.number);
+            assert!(!pull.head_branch.is_empty(), "PR #{} has no head branch", pull.number);
+            assert!(!pull.updated_at.is_empty(), "PR #{} has no timestamp", pull.number);
+            assert!(
+                ["success", "failure", "pending", "none"].contains(&pull.checks),
+                "unmapped check state `{}` on PR #{}",
+                pull.checks,
+                pull.number
+            );
+        }
+
+        assert!(
+            page.pulls.iter().any(|p| p.draft),
+            "the fixture includes a draft PR so that filter is exercised"
+        );
+    }
+
+    #[tokio::test]
+    async fn finds_the_review_requested_pull_request() {
+        let Some(token) = token() else {
+            eprintln!("skipped: no GITHUB_TOKEN");
+            return;
+        };
+        let client = GitHub::new(&token).unwrap();
+        let (owner, name) = split(FIXTURE);
+
+        // The tray badge compares these logins against the token's own account,
+        // so the two have to line up on real data.
+        let me = client.validate(None).await.unwrap().login;
+        let page = client.list_pulls(owner, name).await.unwrap();
+
+        assert!(
+            page.pulls.iter().any(|p| p.requested_reviewers.iter().any(|r| *r == me)),
+            "expected at least one PR awaiting review from {me}"
+        );
+    }
+
+    #[test]
     fn maps_github_status_pairs_onto_ui_states() {
         assert_eq!(run_status("in_progress", None), "running");
         assert_eq!(run_status("queued", None), "queued");
@@ -1325,6 +1532,30 @@ on:
             assert!(first.get(key).is_some(), "ReleaseInfo is missing `{key}`");
         }
 
+        let json = serde_json::to_value(PullRequestsPage {
+            pulls: vec![PullRequestInfo {
+                number: 629,
+                title: "feat: something".into(),
+                author: "octocat".into(),
+                head_branch: "feat/thing".into(),
+                draft: false,
+                requested_reviewers: vec!["octocat".into()],
+                checks: "success",
+                updated_at: "2026-10-06T08:46:00Z".into(),
+                html_url: "https://example.test/pull/629".into(),
+            }],
+            has_more: false,
+        })
+        .unwrap();
+        assert!(json.get("hasMore").is_some(), "PullRequestsPage is missing `hasMore`");
+        let first = &json["pulls"][0];
+        for key in [
+            "number", "title", "author", "headBranch", "draft", "requestedReviewers", "checks",
+            "updatedAt", "htmlUrl",
+        ] {
+            assert!(first.get(key).is_some(), "PullRequestInfo is missing `{key}`");
+        }
+
         let json = serde_json::to_value(DispatchWorkflow {
             id: 3,
             name: "Deploy Production".into(),
@@ -1349,5 +1580,6 @@ on:
 
     }
 }
+
 
 

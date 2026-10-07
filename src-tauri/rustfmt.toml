@@ -1,0 +1,6 @@
+# The code is written to a wider, more compact style than rustfmt's defaults:
+# short struct literals, match arms, and calls stay on one line. Without this,
+# `cargo fmt` explodes them across three lines each and the files grow by a
+# fifth for no gain in readability.
+max_width = 110
+use_small_heuristics = "Max"

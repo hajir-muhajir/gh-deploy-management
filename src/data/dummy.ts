@@ -1,38 +1,4 @@
-import type { CheckStatus, InputValue, PullRequest, Workflow } from "../types";
-
-export const WORKFLOWS: Workflow[] = [
-  {
-    name: "Deploy",
-    file: "deploy.yml",
-    inputs: [
-      { key: "version", label: "Version", type: "text", def: "", ph: "latest" },
-      { key: "dry_run", label: "Dry run", hint: "Plan only, skip apply", type: "bool", def: false },
-    ],
-  },
-  {
-    name: "Release",
-    file: "release.yml",
-    inputs: [
-      {
-        key: "bump",
-        label: "Version bump",
-        type: "choice",
-        options: ["patch", "minor", "major"],
-        def: "patch",
-      },
-      {
-        key: "prerelease",
-        label: "Pre-release",
-        hint: "Mark as not production-ready",
-        type: "bool",
-        def: false,
-      },
-    ],
-  },
-  { name: "Nightly build", file: "nightly.yml", inputs: [] },
-];
-
-export const BRANCHES = ["main", "develop", "feat/invites", "fix/auth-refresh"];
+import type { CheckStatus, PullRequest } from "../types";
 
 export const PULL_REQUESTS: PullRequest[] = [
   { n: 214, title: "Workspace invites via email", author: "ayu", head: "feat/invites", draft: false, review: true, checks: "success", updated: "2h" },
@@ -49,8 +15,3 @@ export const CHECK_STATES: Record<CheckStatus, { color: string; label: string }>
   failure: { color: "bg-red-dot", label: "Checks failed" },
   pending: { color: "bg-orange-dot", label: "Checks running" },
 };
-
-/** Default input values for a workflow, keyed by input key. */
-export function defaultValues(workflow: Workflow): Record<string, InputValue> {
-  return Object.fromEntries(workflow.inputs.map((i) => [i.key, i.def]));
-}

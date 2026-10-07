@@ -10,7 +10,8 @@ use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt};
 
 use github::{
-    ApiError, GitHub, ReleasesPage, RepoInfo, ReposPage, RunInfo, TokenInfo, WorkflowInfo,
+    ApiError, DispatchWorkflow, GitHub, ReleasesPage, RepoInfo, ReposPage, RunInfo, TokenInfo,
+    WorkflowInfo,
 };
 
 const MAIN_WINDOW: &str = "main";
@@ -156,6 +157,27 @@ async fn github_list_releases(owner: String, name: String) -> Result<ReleasesPag
 }
 
 #[tauri::command]
+async fn github_list_dispatchable(
+    owner: String,
+    name: String,
+) -> Result<Vec<DispatchWorkflow>, ApiError> {
+    client_from_keychain()?.list_dispatchable(&owner, &name).await
+}
+
+#[tauri::command]
+async fn github_dispatch_workflow(
+    owner: String,
+    name: String,
+    workflow_id: u64,
+    git_ref: String,
+    inputs: std::collections::HashMap<String, String>,
+) -> Result<(), ApiError> {
+    client_from_keychain()?
+        .dispatch_workflow(&owner, &name, workflow_id, &git_ref, inputs)
+        .await
+}
+
+#[tauri::command]
 async fn github_cancel_run(owner: String, name: String, run_id: u64) -> Result<(), ApiError> {
     client_from_keychain()?.cancel_run(&owner, &name, run_id).await
 }
@@ -181,6 +203,8 @@ pub fn run() {
             github_list_workflows,
             github_list_runs,
             github_list_releases,
+            github_list_dispatchable,
+            github_dispatch_workflow,
             github_cancel_run,
             github_rerun_run,
         ])

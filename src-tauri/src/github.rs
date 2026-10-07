@@ -6,6 +6,8 @@
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use yaml_rust2::{Yaml, YamlLoader};
 
 const API: &str = "https://api.github.com";
 const UA: &str = "gh-deploy-management";
@@ -71,6 +73,9 @@ async fn error_from(response: Response) -> ApiError {
             ApiError::new("rateLimited", message)
         }
         StatusCode::FORBIDDEN => ApiError::new("forbidden", message),
+        // GitHub explains exactly what it disliked — "Required input 'tag' not
+        // provided", "No ref found for: …" — so the message is the whole point.
+        StatusCode::UNPROCESSABLE_ENTITY => ApiError::new("invalid", message),
         _ => ApiError::new("network", message),
     }
 }
@@ -183,6 +188,123 @@ pub struct ReleasesPage {
     pub releases: Vec<ReleaseInfo>,
     /// Whether GitHub reported further pages, so the UI can offer a way out.
     pub has_more: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchInput {
+    pub key: String,
+    /// The YAML `description`, falling back to the key when there is none.
+    pub label: String,
+    /// Normalised to what the UI can draw: "text" | "bool" | "choice".
+    pub kind: &'static str,
+    /// Always a string, even for booleans — that is what the dispatch API takes.
+    pub default: String,
+    /// Only populated for "choice".
+    pub options: Vec<String>,
+    pub required: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchWorkflow {
+    pub id: u64,
+    pub name: String,
+    pub path: String,
+    pub inputs: Vec<DispatchInput>,
+}
+
+/// Reads a workflow's `workflow_dispatch` trigger out of its YAML source.
+///
+/// `None` means the workflow cannot be triggered by hand; `Some(vec![])` means
+/// it can, but takes no inputs. REST exposes neither fact, so the file itself is
+/// the only source. Kept free of I/O so it can be tested without a token.
+pub fn parse_dispatch_inputs(text: &str) -> Option<Vec<DispatchInput>> {
+    let docs = YamlLoader::load_from_str(text).ok()?;
+    let on = on_node(docs.first()?)?;
+
+    let dispatch = match on {
+        // `on: workflow_dispatch`
+        Yaml::String(event) => return (event == "workflow_dispatch").then(Vec::new),
+        // `on: [push, workflow_dispatch]`
+        Yaml::Array(events) => {
+            let found = events.iter().any(|e| e.as_str() == Some("workflow_dispatch"));
+            return found.then(Vec::new);
+        }
+        // `on:` followed by an indented block of events.
+        Yaml::Hash(_) => field(on, "workflow_dispatch")?,
+        _ => return None,
+    };
+
+    // A bare `workflow_dispatch:` parses as null, which is dispatchable but
+    // input-less — the shape four of the five fixture workflows use.
+    let Some(inputs) = field(dispatch, "inputs").and_then(Yaml::as_hash) else {
+        return Some(Vec::new());
+    };
+
+    Some(
+        inputs
+            .iter()
+            .filter_map(|(key, spec)| parse_input(key.as_str()?, spec))
+            .collect(),
+    )
+}
+
+/// The `on:` key of a workflow document.
+fn on_node(doc: &Yaml) -> Option<&Yaml> {
+    let hash = doc.as_hash()?;
+    hash.get(&Yaml::String("on".into())).or_else(|| {
+        // A YAML 1.1 parser resolves the bare word `on` to a boolean, which
+        // would make every workflow look non-dispatchable. yaml-rust2 is 1.2 so
+        // this branch should stay dead, but silence is the wrong failure here.
+        hash.get(&Yaml::Boolean(true))
+    })
+}
+
+/// Hash lookup that treats a missing key and a `BadValue` alike.
+fn field<'a>(node: &'a Yaml, key: &str) -> Option<&'a Yaml> {
+    node.as_hash()?
+        .get(&Yaml::String(key.into()))
+        .filter(|value| !value.is_badvalue())
+}
+
+/// Defaults and options may be written unquoted, so they arrive as numbers or
+/// booleans. The dispatch API wants strings regardless.
+fn scalar(node: &Yaml) -> Option<String> {
+    match node {
+        Yaml::String(value) => Some(value.clone()),
+        Yaml::Real(value) => Some(value.clone()),
+        Yaml::Integer(value) => Some(value.to_string()),
+        Yaml::Boolean(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn parse_input(key: &str, spec: &Yaml) -> Option<DispatchInput> {
+    let options: Vec<String> = field(spec, "options")
+        .and_then(Yaml::as_vec)
+        .map(|list| list.iter().filter_map(scalar).collect())
+        .unwrap_or_default();
+
+    let kind = match field(spec, "type").and_then(Yaml::as_str).unwrap_or("string") {
+        // A choice with no options cannot be drawn as one; fall through to text.
+        "choice" if !options.is_empty() => "choice",
+        "boolean" => "bool",
+        // string, number, environment, and whatever GitHub adds next.
+        _ => "text",
+    };
+
+    Some(DispatchInput {
+        key: key.to_string(),
+        label: field(spec, "description")
+            .and_then(Yaml::as_str)
+            .unwrap_or(key)
+            .to_string(),
+        kind,
+        default: field(spec, "default").and_then(scalar).unwrap_or_default(),
+        options,
+        required: field(spec, "required").and_then(Yaml::as_bool).unwrap_or(false),
+    })
 }
 
 /// Flags the release GitHub would call "latest": the first non-draft,
@@ -406,6 +528,17 @@ impl GitHub {
             .map_err(ApiError::network)
     }
 
+    /// `post` pins `Content-Length: 0`, so a request with a body needs its own
+    /// entry point rather than a flag.
+    async fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<Response, ApiError> {
+        self.http
+            .post(format!("{API}{path}"))
+            .json(body)
+            .send()
+            .await
+            .map_err(ApiError::network)
+    }
+
     /// True when the endpoint is reachable with this token; used to probe
     /// fine-grained permissions, which GitHub does not expose any other way.
     async fn probe(&self, path: &str) -> bool {
@@ -567,6 +700,87 @@ impl GitHub {
         mark_latest(&mut releases);
 
         Ok(ReleasesPage { releases, has_more })
+    }
+
+    /// Reads one file from the default branch as plain text. `vnd.github.raw`
+    /// avoids the base64 wrapper the JSON representation would use.
+    async fn file_contents(&self, owner: &str, name: &str, path: &str) -> Result<String, ApiError> {
+        let response = self
+            .http
+            .get(format!("{API}/repos/{owner}/{name}/contents/{path}"))
+            .header(ACCEPT, "application/vnd.github.raw")
+            .send()
+            .await
+            .map_err(ApiError::network)?;
+        if !response.status().is_success() {
+            return Err(error_from(response).await);
+        }
+        response.text().await.map_err(ApiError::network)
+    }
+
+    /// The workflows a person can start by hand, with the form fields each one
+    /// asks for.
+    ///
+    /// Costs one request per active workflow because REST reports neither the
+    /// trigger nor the inputs — both live only in the YAML. Disabled workflows
+    /// are skipped since dispatching one does nothing. A file that cannot be
+    /// read or parsed drops that workflow alone; one broken file must not empty
+    /// the whole tab.
+    pub async fn list_dispatchable(
+        &self,
+        owner: &str,
+        name: &str,
+    ) -> Result<Vec<DispatchWorkflow>, ApiError> {
+        let workflows = self.list_workflows(owner, name).await?;
+        let mut dispatchable = Vec::new();
+
+        for workflow in workflows.into_iter().filter(|w| w.state == "active") {
+            let Ok(text) = self.file_contents(owner, name, &workflow.path).await else {
+                continue;
+            };
+            let Some(inputs) = parse_dispatch_inputs(&text) else {
+                continue;
+            };
+            dispatchable.push(DispatchWorkflow {
+                id: workflow.id,
+                name: workflow.name,
+                path: workflow.path,
+                inputs,
+            });
+        }
+
+        Ok(dispatchable)
+    }
+
+    /// Starts a workflow. Answers 204 with no body; the run takes a few seconds
+    /// to appear in the runs list afterwards.
+    pub async fn dispatch_workflow(
+        &self,
+        owner: &str,
+        name: &str,
+        workflow_id: u64,
+        git_ref: &str,
+        inputs: HashMap<String, String>,
+    ) -> Result<(), ApiError> {
+        let body = serde_json::json!({ "ref": git_ref, "inputs": inputs });
+        let response = self
+            .post_json(
+                &format!("/repos/{owner}/{name}/actions/workflows/{workflow_id}/dispatches"),
+                &body,
+            )
+            .await?;
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        let error = error_from(response).await;
+        Err(match error.kind {
+            "forbidden" => ApiError::new(
+                "forbidden",
+                "Token has no permission to start workflows (needs Actions: write)",
+            ),
+            _ => error,
+        })
     }
 
     pub async fn cancel_run(&self, owner: &str, name: &str, run_id: u64) -> Result<(), ApiError> {
@@ -845,6 +1059,177 @@ mod tests {
     }
 
     #[test]
+    fn parses_every_form_of_the_on_key() {
+        // All four are legal GitHub syntax and all four occur in the wild.
+        assert_eq!(
+            parse_dispatch_inputs("name: x\non: workflow_dispatch\n").map(|i| i.len()),
+            Some(0),
+            "scalar form"
+        );
+        assert_eq!(
+            parse_dispatch_inputs("name: x\non: [push, workflow_dispatch]\n").map(|i| i.len()),
+            Some(0),
+            "array form"
+        );
+        assert_eq!(
+            parse_dispatch_inputs("name: x\non:\n  workflow_dispatch:\n").map(|i| i.len()),
+            Some(0),
+            "bare block form — four of the five fixture workflows"
+        );
+        assert_eq!(
+            parse_dispatch_inputs(
+                "name: x\non:\n  workflow_dispatch:\n    inputs:\n      tag:\n        required: true\n"
+            )
+            .map(|i| i.len()),
+            Some(1),
+            "block form with inputs"
+        );
+
+        // Not dispatchable: these must be left out of the Run tab entirely.
+        assert!(parse_dispatch_inputs("name: x\non:\n  push:\n    branches: [main]\n").is_none());
+        assert!(parse_dispatch_inputs("name: x\non: [push, pull_request]\n").is_none());
+        assert!(parse_dispatch_inputs("name: x\njobs: {}\n").is_none());
+        assert!(parse_dispatch_inputs("::: not yaml at all\n  - [}\n").is_none());
+    }
+
+    #[test]
+    fn reads_the_on_key_as_a_key_and_not_as_a_boolean() {
+        // On YAML 1.1 the bare word `on` resolves to `true`, which would make
+        // every workflow look non-dispatchable and quietly empty the tab.
+        let docs = YamlLoader::load_from_str("on: workflow_dispatch\n").unwrap();
+        let hash = docs[0].as_hash().unwrap();
+        assert!(
+            hash.contains_key(&Yaml::String("on".into())),
+            "the parser must be YAML 1.2; `on` resolved to {:?}",
+            hash.keys().next()
+        );
+    }
+
+    #[test]
+    fn reads_input_type_default_and_required() {
+        let inputs = parse_dispatch_inputs(
+            r#"
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      dry_run:
+        description: Plan only
+        type: boolean
+        default: false
+      tag:
+        description: Tag version to deploy
+        required: true
+        type: string
+      retries:
+        type: number
+        default: 3
+      colour:
+        type: choice
+"#,
+        )
+        .expect("workflow_dispatch is present");
+
+        let by_key = |key: &str| inputs.iter().find(|i| i.key == key).unwrap();
+
+        let bump = by_key("bump");
+        assert_eq!(bump.kind, "choice");
+        assert_eq!(bump.label, "Version bump");
+        assert_eq!(bump.default, "patch");
+        assert_eq!(bump.options, ["patch", "minor", "major"]);
+        assert!(!bump.required);
+
+        let dry_run = by_key("dry_run");
+        assert_eq!(dry_run.kind, "bool");
+        // Written unquoted, so YAML hands back a boolean — the dispatch API
+        // still wants a string.
+        assert_eq!(dry_run.default, "false");
+
+        let tag = by_key("tag");
+        assert_eq!(tag.kind, "text");
+        assert!(tag.required);
+        assert_eq!(tag.default, "", "a required input has nothing to prefill");
+
+        assert_eq!(by_key("retries").default, "3", "numbers become strings too");
+
+        let colour = by_key("colour");
+        assert_eq!(colour.kind, "text", "a choice without options cannot be a choice");
+        assert_eq!(colour.label, "colour", "label falls back to the key");
+    }
+
+    #[tokio::test]
+    async fn lists_only_dispatchable_workflows() {
+        let Some(token) = token() else {
+            eprintln!("skipped: no GITHUB_TOKEN");
+            return;
+        };
+        let (owner, name) = split(FIXTURE);
+        let list = GitHub::new(&token).unwrap().list_dispatchable(owner, name).await.unwrap();
+
+        let paths: Vec<&str> = list.iter().map(|w| w.path.as_str()).collect();
+        assert!(
+            !paths.contains(&".github/workflows/deploy_to_server.yml"),
+            "Deploy Laravel is push-only and must not be offered: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&".github/workflows/deploy-production.yml"),
+            "disabled workflows cannot run and must not be offered: {paths:?}"
+        );
+
+        let deploy = list
+            .iter()
+            .find(|w| w.path == ".github/workflows/deploy-multiple-server.yml")
+            .expect("Deploy Production is dispatchable");
+        let tag = deploy.inputs.iter().find(|i| i.key == "tag").expect("it asks for a tag");
+        assert!(tag.required, "the tag input is declared required");
+        assert!(tag.default.is_empty(), "and has no default to fall back on");
+
+        let cache = list
+            .iter()
+            .find(|w| w.path == ".github/workflows/optimize-cache.yml")
+            .expect("Optimize Cache is dispatchable");
+        assert!(cache.inputs.is_empty(), "it takes no inputs");
+    }
+
+    #[tokio::test]
+    async fn rejects_a_dispatch_with_an_unknown_ref() {
+        let Some(token) = token() else {
+            eprintln!("skipped: no GITHUB_TOKEN");
+            return;
+        };
+        let (owner, name) = split(FIXTURE);
+        let client = GitHub::new(&token).unwrap();
+
+        let cache = client
+            .list_dispatchable(owner, name)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|w| w.path == ".github/workflows/optimize-cache.yml")
+            .expect("fixture has Optimize Cache");
+
+        // A ref that cannot exist: GitHub rejects the call before scheduling
+        // anything, so this exercises the endpoint, the Actions: write
+        // permission, and the payload shape without starting production CI.
+        let error = client
+            .dispatch_workflow(owner, name, cache.id, "branch-yang-pasti-tidak-ada-123", HashMap::new())
+            .await
+            .expect_err("an unknown ref must be refused");
+
+        assert_eq!(error.kind, "invalid", "got {error:?}");
+        assert!(
+            error.message.to_lowercase().contains("ref"),
+            "GitHub should name the ref it could not find: {}",
+            error.message
+        );
+    }
+
+    #[test]
     fn maps_github_status_pairs_onto_ui_states() {
         assert_eq!(run_status("in_progress", None), "running");
         assert_eq!(run_status("queued", None), "queued");
@@ -939,5 +1324,30 @@ mod tests {
         ] {
             assert!(first.get(key).is_some(), "ReleaseInfo is missing `{key}`");
         }
+
+        let json = serde_json::to_value(DispatchWorkflow {
+            id: 3,
+            name: "Deploy Production".into(),
+            path: ".github/workflows/deploy-multiple-server.yml".into(),
+            inputs: vec![DispatchInput {
+                key: "tag".into(),
+                label: "Tag version to deploy".into(),
+                kind: "text",
+                default: String::new(),
+                options: vec![],
+                required: true,
+            }],
+        })
+        .unwrap();
+        for key in ["id", "name", "path", "inputs"] {
+            assert!(json.get(key).is_some(), "DispatchWorkflow is missing `{key}`");
+        }
+        let first = &json["inputs"][0];
+        for key in ["key", "label", "kind", "default", "options", "required"] {
+            assert!(first.get(key).is_some(), "DispatchInput is missing `{key}`");
+        }
+
     }
 }
+
+

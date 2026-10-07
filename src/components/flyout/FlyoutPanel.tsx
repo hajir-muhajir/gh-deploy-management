@@ -11,7 +11,10 @@ import { PullRequestsTab } from "../tabs/PullRequestsTab";
 import { ReleasesTab } from "../tabs/ReleasesTab";
 import { RunTab } from "../tabs/RunTab";
 import { SettingsTab } from "../tabs/SettingsTab";
-import { BRANCHES, PULL_REQUESTS, WORKFLOWS, defaultValues } from "../../data/dummy";
+import { PULL_REQUESTS } from "../../data/dummy";
+import * as api from "../../lib/github";
+import type { DispatchWorkflow } from "../../lib/github";
+import { useDispatchable } from "../../hooks/useDispatchable";
 import { useGitHubAuth } from "../../hooks/useGitHubAuth";
 import { useReleases } from "../../hooks/useReleases";
 import { useRepos } from "../../hooks/useRepos";
@@ -19,7 +22,7 @@ import { useRuns } from "../../hooks/useRuns";
 import type { useTheme } from "../../hooks/useTheme";
 import { useToast } from "../../hooks/useToast";
 import { useWorkflows } from "../../hooks/useWorkflows";
-import type { InputValue, PrFilterId, Repo, ViewId } from "../../types";
+import type { PrFilterId, Repo, ViewId } from "../../types";
 
 interface FlyoutPanelProps {
   theme: ReturnType<typeof useTheme>;
@@ -42,12 +45,6 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   const [prFilter, setPrFilter] = useState<PrFilterId>("open");
   const [spin, setSpin] = useState(0);
 
-  const [workflowIndex, setWorkflowIndex] = useState(0);
-  const [branch, setBranch] = useState<string | null>(null);
-  const [values, setValues] = useState<Record<string, InputValue>>(() =>
-    defaultValues(WORKFLOWS[0]),
-  );
-
   const [draft, setDraft] = useState("");
   const [showToken, setShowToken] = useState(false);
 
@@ -68,17 +65,13 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   const workflows = useWorkflows(activeFullName, connected);
   const runsState = useRuns(activeFullName, connected);
   const releases = useReleases(activeFullName, connected);
+  // Lazy: one request per active workflow, so only while the tab is open.
+  const dispatchable = useDispatchable(activeFullName, connected && view === "run");
 
   const runs = useMemo(
     () => runsState.runs.filter((run) => !workflows.hiddenWorkflowIds.has(run.workflowId)),
     [runsState.runs, workflows.hiddenWorkflowIds],
   );
-
-  // Reset the dispatch branch whenever the active repository changes; default
-  // branches are not always "main" (some of this account's repos use "Main").
-  useEffect(() => {
-    setBranch(repo?.defaultBranch ?? null);
-  }, [repo?.fullName, repo?.defaultBranch]);
 
   // Probe the Actions permission once a repository is known — for fine-grained
   // tokens that is the only way to confirm it. Each repo is probed at most once
@@ -109,25 +102,24 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
     );
   }, [repo, failingCount, runsState.loading]);
 
-  // The default branch is not always "main", so put the repo's own first and
-  // drop it from the placeholder list to avoid a duplicate option.
-  const branchOptions = useMemo(() => {
-    if (!repo) return BRANCHES;
-    return [repo.defaultBranch, ...BRANCHES.filter((b) => b !== repo.defaultBranch)];
-  }, [repo]);
-
   const badgeCount = failingCount + reviewCount;
   useEffect(() => onBadgeChange?.(badgeCount), [badgeCount, onBadgeChange]);
 
-  function selectWorkflow(index: number) {
-    setWorkflowIndex(index);
-    setValues(defaultValues(WORKFLOWS[index]));
-  }
-
-  /** Placeholder: the Run tab is not wired to workflow_dispatch yet. */
-  function submitRun() {
-    if (!repo || !branch) return;
-    showToast(`${WORKFLOWS[workflowIndex].name} dispatch is not wired up yet`);
+  /**
+   * Starts a workflow for real. GitHub needs a few seconds before the new run
+   * shows up in the runs list, so the Actions tab is refreshed rather than
+   * pretending the run is already there — the header refresh is the way out.
+   */
+  async function dispatch(workflow: DispatchWorkflow, inputs: Record<string, string>) {
+    if (!repo) return;
+    try {
+      await api.dispatchWorkflow(repo.owner, repo.name, workflow.id, repo.defaultBranch, inputs);
+      showToast(`${workflow.name} started`);
+      setView("actions");
+      runsState.refresh();
+    } catch (caught) {
+      showToast(api.toApiError(caught).message);
+    }
   }
 
   async function saveToken() {
@@ -221,14 +213,11 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
       case "run":
         return (
           <RunTab
-            workflowIndex={workflowIndex}
-            branch={branch ?? repo.defaultBranch}
-            branches={branchOptions}
-            values={values}
-            onSelectWorkflow={selectWorkflow}
-            onBranchChange={setBranch}
-            onValueChange={(key, value) => setValues((prev) => ({ ...prev, [key]: value }))}
-            onSubmit={submitRun}
+            workflows={dispatchable.workflows}
+            loading={dispatchable.loading}
+            error={dispatchable.error}
+            defaultBranch={repo.defaultBranch}
+            onDispatch={dispatch}
           />
         );
       case "prs":
@@ -263,6 +252,8 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
             workflows.reload();
             runsState.refresh();
             releases.refresh();
+            // A no-op unless the Run tab is open; the hook is gated on that.
+            dispatchable.reload();
           }}
           onToggleMenu={() => setMenuOpen((m) => !m)}
           onOpenSettings={() => {

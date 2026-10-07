@@ -1,5 +1,3 @@
-import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
 import {
   CloseIcon,
   RefreshIcon,
@@ -7,12 +5,10 @@ import {
   RunFailureIcon,
   RunSuccessIcon,
 } from "../icons";
+import { ConfirmButton } from "../ui/ConfirmButton";
 import type { ApiError, RunInfo, RunStatus } from "../../lib/github";
 import { estimateProgress, runDuration } from "../../lib/progress";
 import { formatDuration, relativeTime, secondsBetween } from "../../lib/time";
-
-/** How long the "Sure?" confirmation stays armed before reverting. */
-const CONFIRM_MS = 3000;
 
 interface ActionsTabProps {
   runs: RunInfo[];
@@ -48,53 +44,6 @@ function rightLabel(run: RunInfo, progress: number | null): string {
     return progress === null ? formatDuration(secondsBetween(run.startedAt)) : `${progress}%`;
   }
   return formatDuration(runDuration(run));
-}
-
-/**
- * Cancel and re-run hit production CI, so the first click only arms the button
- * and the second one sends it.
- */
-function ConfirmButton({
-  title,
-  onConfirm,
-  children,
-}: {
-  title: string;
-  onConfirm: () => void;
-  children: React.ReactNode;
-}) {
-  const [armed, setArmed] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
-
-  function onClick() {
-    if (armed) {
-      if (timer.current) clearTimeout(timer.current);
-      setArmed(false);
-      onConfirm();
-      return;
-    }
-    setArmed(true);
-    timer.current = setTimeout(() => setArmed(false), CONFIRM_MS);
-  }
-
-  return (
-    <button
-      type="button"
-      title={armed ? `${title} — click again to confirm` : title}
-      aria-label={title}
-      onClick={onClick}
-      className={clsx(
-        "grid cursor-pointer place-items-center rounded-md border-0 p-0 transition-colors",
-        armed
-          ? "h-6 w-auto bg-red-dot px-1.5 text-[10px] font-semibold text-white"
-          : "h-6 w-6 bg-transparent text-fg2 hover:bg-fill hover:text-fg",
-      )}
-    >
-      {armed ? "Sure?" : children}
-    </button>
-  );
 }
 
 export function ActionsTab({

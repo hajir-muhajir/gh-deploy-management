@@ -9,6 +9,8 @@ export type ApiErrorKind =
   | "network"
   | "keyring"
   | "notConnected"
+  /** GitHub refused the request itself — a missing required input, an unknown ref. */
+  | "invalid"
   /** Running outside the Tauri webview, where no command bridge exists. */
   | "unavailable"
   | "unknown";
@@ -101,6 +103,28 @@ export interface ReleasesPage {
   hasMore: boolean;
 }
 
+/** How the UI draws an input; Rust has already collapsed GitHub's wider set. */
+export type DispatchInputKind = "text" | "bool" | "choice";
+
+export interface DispatchInput {
+  key: string;
+  /** The YAML `description`, falling back to the key. */
+  label: string;
+  kind: DispatchInputKind;
+  /** Always a string — "true"/"false" for booleans — as the API expects. */
+  default: string;
+  /** Only populated for "choice". */
+  options: string[];
+  required: boolean;
+}
+
+export interface DispatchWorkflow {
+  id: number;
+  name: string;
+  path: string;
+  inputs: DispatchInput[];
+}
+
 export interface ReposPage {
   repos: RepoInfo[];
   truncated: boolean;
@@ -173,6 +197,27 @@ export function listRuns(owner: string, name: string) {
 
 export function listReleases(owner: string, name: string) {
   return call<ReleasesPage>("github_list_releases", { owner, name });
+}
+
+/**
+ * The workflows that can be started by hand, with their form fields.
+ *
+ * Costs one request per active workflow because the trigger and the inputs
+ * exist only in the YAML, so call it lazily.
+ */
+export function listDispatchable(owner: string, name: string) {
+  return call<DispatchWorkflow[]>("github_list_dispatchable", { owner, name });
+}
+
+/** Starts a workflow for real. Rejects with kind "invalid" if GitHub refuses the inputs. */
+export function dispatchWorkflow(
+  owner: string,
+  name: string,
+  workflowId: number,
+  gitRef: string,
+  inputs: Record<string, string>,
+) {
+  return call<void>("github_dispatch_workflow", { owner, name, workflowId, gitRef, inputs });
 }
 
 /** Needs the Actions *write* permission; rejects with kind "forbidden" without it. */

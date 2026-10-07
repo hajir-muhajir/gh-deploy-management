@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use tauri::AppHandle;
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::flyout;
 use crate::github::{
@@ -123,4 +124,29 @@ pub async fn github_rerun_run(owner: String, name: String, run_id: u64) -> Resul
 #[tauri::command]
 pub fn set_tray_state(app: AppHandle, failing: u32, review: u32, running: bool) {
     flyout::store_tray_state(&app, TrayState { failing, review, running });
+}
+
+/// Whether the registry entry actually exists. The registry is the source of
+/// truth for the toggle; the frontend only remembers whether it has already
+/// applied the first-run default.
+///
+/// These two return a plain `String` error rather than `ApiError`: that type
+/// belongs to the `github` module and autostart has nothing to do with GitHub.
+/// `toApiError` on the other side normalises it to kind "unknown".
+#[tauri::command]
+pub fn autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|err| err.to_string())
+}
+
+/// Reports the state *after* the change, read back from the registry, so the
+/// toggle can never show something the registry disagrees with.
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|err| err.to_string())?;
+    } else {
+        manager.disable().map_err(|err| err.to_string())?;
+    }
+    manager.is_enabled().map_err(|err| err.to_string())
 }

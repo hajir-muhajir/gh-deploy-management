@@ -16,6 +16,9 @@ Built with [Tauri 2](https://tauri.app) (Rust) and React 19 + TypeScript + Tailw
 - **Releases** — the latest releases with their notes.
 - **Multiple repositories**, switchable from the header; hide the ones you don't want in the list.
 - **Light/dark + accent themes**, following Windows by default.
+- **Single instance** — opening the shortcut again brings up the panel you already have running
+  instead of starting a second copy.
+- **Starts with Windows** by default, switchable from Settings.
 
 Your personal access token is stored in the Windows Credential Manager and never leaves the Rust
 side of the app.

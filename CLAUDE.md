@@ -59,6 +59,14 @@ don't add a command that returns the token, and don't move an API call into Type
   panel, so a tray click needs the `REOPEN_GRACE` window to not instantly re-open what the blur just
   closed; and the webview stays alive while hidden, so showing emits `flyout-shown` to trigger a
   refresh (timers may be throttled in a hidden WebView2).
+- Plugin order in `Builder` is load-bearing: `tauri-plugin-single-instance` must stay **first**. Its
+  callback has to be in place before anything else runs, or a second launch builds its own tray icon
+  before being told it is a duplicate (that was the "tray icon multiplies" bug). The callback calls
+  `flyout::show` — deliberately not `toggle`, whose `just_hidden` grace period exists for the
+  tray-click gesture, not for a shortcut click.
+- Autostart: the registry entry (`is_enabled()`) is the source of truth for the toggle; localStorage
+  holds only `ghdm.autostart.decided`, the marker that the first-run default has been applied, so
+  turning the toggle off is never silently undone on the next launch.
 - [tray/](src-tauri/src/tray/) — `resolve()` picks the one winning badge (failing > review > running >
   idle), unit-tested. Windows has no tray badge API, so every count is a separate baked PNG embedded
   via `include_bytes!` — a missing asset is a compile error.

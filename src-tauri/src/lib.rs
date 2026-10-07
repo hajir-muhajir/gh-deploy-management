@@ -11,6 +11,17 @@ use flyout::{FlyoutState, TrayStateStore};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First in the chain on purpose: the callback has to be in place before
+        // anything else runs, or a second launch would build its own tray icon
+        // before being told it is a duplicate.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // The duplicate process exits on its own; the one already running
+            // answers the shortcut click the way the tray icon would.
+            flyout::show(app);
+        }))
+        // Windows registers the autostart entry under HKCU\…\CurrentVersion\Run.
+        // `MacosLauncher` is required by the signature and ignored here.
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -33,6 +44,8 @@ pub fn run() {
             commands::github_cancel_run,
             commands::github_rerun_run,
             commands::set_tray_state,
+            commands::autostart_enabled,
+            commands::set_autostart,
         ])
         .setup(|app| {
             tray::setup(app)?;

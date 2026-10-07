@@ -15,6 +15,7 @@ import { SettingsTab } from "../tabs/SettingsTab";
 import * as api from "../../lib/github";
 import type { DispatchWorkflow } from "../../lib/github";
 import { intervalMs, useAutoRefresh } from "../../hooks/useAutoRefresh";
+import { useAutostart } from "../../hooks/useAutostart";
 import { useDispatchable } from "../../hooks/useDispatchable";
 import { useFlyoutShown } from "../../hooks/useFlyoutShown";
 import { useGitHubAuth } from "../../hooks/useGitHubAuth";
@@ -146,6 +147,8 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   const syncedAt = synced.length > 0 ? synced[synced.length - 1] : null;
 
   const autoRefresh = useAutoRefresh();
+  // Reads the Windows registry, so there is nothing to ask for in the preview.
+  const autostart = useAutostart(isTauri);
   const period = intervalMs(autoRefresh.interval);
 
   const refreshLive = useCallback(() => {
@@ -218,6 +221,8 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
       onThemeChange={theme.setPreference}
       refreshInterval={autoRefresh.interval}
       onRefreshIntervalChange={autoRefresh.setInterval}
+      autostart={autostart.enabled}
+      onAutostartChange={autostart.setEnabled}
       accent={theme.accent}
       onAccentChange={theme.setAccent}
     />

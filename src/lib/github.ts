@@ -267,3 +267,13 @@ export function cancelRun(owner: string, name: string, runId: number) {
 export function rerunRun(owner: string, name: string, runId: number) {
   return call<void>("github_rerun_run", { owner, name, runId });
 }
+
+/** True when the Windows startup entry for this app exists. */
+export function autostartEnabled() {
+  return call<boolean>("autostart_enabled");
+}
+
+/** Resolves to the state *after* the change, read back from the registry. */
+export function setAutostart(enabled: boolean) {
+  return call<boolean>("set_autostart", { enabled });
+}

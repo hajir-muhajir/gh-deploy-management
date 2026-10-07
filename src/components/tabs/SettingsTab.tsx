@@ -25,6 +25,9 @@ interface SettingsTabProps {
   refreshInterval: RefreshInterval;
   onRefreshIntervalChange: (value: RefreshInterval) => void;
 
+  autostart: boolean;
+  onAutostartChange: (value: boolean) => void;
+
   themePreference: ThemePreference;
   onThemeChange: (value: ThemePreference) => void;
   accent: AccentId;
@@ -284,6 +287,22 @@ export function SettingsTab(props: SettingsTabProps) {
           {props.refreshInterval === "off"
             ? "Runs and pull requests only reload when you press refresh."
             : "Runs and pull requests reload on their own. Releases, workflows and the repository list only reload when you press refresh or reopen the panel."}
+        </span>
+      </Section>
+
+      <Section title="Startup">
+        <div className={CARD}>
+          <div className={ROW}>
+            <span className="min-w-0 flex-1 text-[13px]">Start with Windows</span>
+            <Toggle
+              label="Start with Windows"
+              checked={props.autostart}
+              onChange={() => props.onAutostartChange(!props.autostart)}
+            />
+          </div>
+        </div>
+        <span className="pl-1 text-[11px] text-fg2">
+          Runs in the system tray when you sign in. The panel stays hidden until you click the icon.
         </span>
       </Section>
 

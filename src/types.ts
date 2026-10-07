@@ -17,6 +17,13 @@ export type TabId = "releases" | "run" | "actions" | "prs";
 export type ViewId = TabId | "settings";
 export type PrFilterId = "open" | "draft" | "review";
 
+/** Mirrors the tray badge: red for failing runs, orange for reviews. */
+export type BadgeTone = "failing" | "review";
+export interface TrayBadge {
+  count: number;
+  tone: BadgeTone;
+}
+
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 export type AccentId = "blue" | "indigo" | "graphite";

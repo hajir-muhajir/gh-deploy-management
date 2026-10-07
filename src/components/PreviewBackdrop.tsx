@@ -1,12 +1,14 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { TrayIcon } from "./icons";
+import type { TrayBadge } from "../types";
 
 interface PreviewBackdropProps {
   /** Highlights the tray button while the flyout is open. */
   open: boolean;
   onToggle: () => void;
-  badgeCount: number;
+  /** Null when the tray would show the plain glyph. */
+  badge: TrayBadge | null;
   children: ReactNode;
 }
 
@@ -14,7 +16,7 @@ interface PreviewBackdropProps {
  * Desktop stand-in shown only in the browser (`npm run dev`): wallpaper plus a
  * fake taskbar, so the flyout can be seen in context. Never rendered inside Tauri.
  */
-export function PreviewBackdrop({ open, onToggle, badgeCount, children }: PreviewBackdropProps) {
+export function PreviewBackdrop({ open, onToggle, badge, children }: PreviewBackdropProps) {
   return (
     <div className="relative h-screen min-h-[720px] w-full overflow-hidden wallpaper">
       {children}
@@ -32,9 +34,14 @@ export function PreviewBackdrop({ open, onToggle, badgeCount, children }: Previe
           )}
         >
           <TrayIcon />
-          {badgeCount > 0 && (
-            <span className="absolute right-[3px] top-[3px] box-border h-3.5 min-w-3.5 rounded-full bg-red-dot px-[3px] text-center text-[9px] font-bold leading-[14px] text-white">
-              {badgeCount}
+          {badge && (
+            <span
+              className={clsx(
+                "absolute right-[3px] top-[3px] box-border h-3.5 min-w-3.5 rounded-full px-[3px] text-center text-[9px] font-bold leading-[14px] text-white",
+                badge.tone === "failing" ? "bg-red-dot" : "bg-orange-dot",
+              )}
+            >
+              {badge.count > 9 ? "9+" : badge.count}
             </span>
           )}
         </button>

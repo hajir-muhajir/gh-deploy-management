@@ -221,6 +221,14 @@ export function listReleases(owner: string, name: string) {
 }
 
 /**
+ * Reports the counts behind the tray badge. Which one wins is decided in Rust,
+ * where the priority is unit-tested.
+ */
+export function setTrayState(failing: number, review: number, running: boolean) {
+  return call<void>("set_tray_state", { failing, review, running });
+}
+
+/**
  * Open pull requests with the state of their checks.
  *
  * Costs one request per pull request: `/pulls` carries no check state, and the

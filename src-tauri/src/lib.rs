@@ -1,13 +1,16 @@
 mod github;
 mod secrets;
+mod tray;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, Theme, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt};
+
+use tray::{TrayState, TRAY_ID};
 
 use github::{
     ApiError, DispatchWorkflow, GitHub, PullRequestsPage, ReleasesPage, RepoInfo, ReposPage,
@@ -24,6 +27,24 @@ const REOPEN_GRACE: Duration = Duration::from_millis(250);
 #[derive(Default)]
 struct FlyoutState {
     hidden_at: Mutex<Option<Instant>>,
+}
+
+/// The last counts the frontend reported, kept so the icon can be redrawn when
+/// the system theme flips without waiting for the webview to notice.
+#[derive(Default)]
+struct TrayStateStore(Mutex<TrayState>);
+
+/// Which taskbar the icon has to sit on. Falls back to dark, the Windows 11
+/// default, when the window has not reported a theme yet.
+fn taskbar_theme(app: &AppHandle) -> Theme {
+    app.get_webview_window(MAIN_WINDOW)
+        .and_then(|window| window.theme().ok())
+        .unwrap_or(Theme::Dark)
+}
+
+fn repaint_tray(app: &AppHandle) {
+    let state = *app.state::<TrayStateStore>().0.lock().unwrap();
+    tray::apply(app, taskbar_theme(app), state);
 }
 
 /// True when the window was hidden by a blur a moment ago, meaning this tray
@@ -187,6 +208,13 @@ async fn github_dispatch_workflow(
         .await
 }
 
+/// The frontend sends raw counts; which one wins is decided in `tray`.
+#[tauri::command]
+fn set_tray_state(app: AppHandle, failing: u32, review: u32, running: bool) {
+    *app.state::<TrayStateStore>().0.lock().unwrap() = TrayState { failing, review, running };
+    repaint_tray(&app);
+}
+
 #[tauri::command]
 async fn github_cancel_run(owner: String, name: String, run_id: u64) -> Result<(), ApiError> {
     client_from_keychain()?.cancel_run(&owner, &name, run_id).await
@@ -203,6 +231,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
         .manage(FlyoutState::default())
+        .manage(TrayStateStore::default())
         .invoke_handler(tauri::generate_handler![
             github_save_token,
             github_token_info,
@@ -218,15 +247,21 @@ pub fn run() {
             github_dispatch_workflow,
             github_cancel_run,
             github_rerun_run,
+            set_tray_state,
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
 
-            TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("GitHub Deploy Management")
+            let idle = tauri::image::Image::from_bytes(tray::icon_bytes(
+                taskbar_theme(app.handle()),
+                tray::Badge::Idle,
+            ))?;
+
+            TrayIconBuilder::with_id(TRAY_ID)
+                .icon(idle)
+                .tooltip(tray::tooltip(tray::Badge::Idle))
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -252,6 +287,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            // Windows does not recolour tray icons, so the glyph has to be
+            // swapped for the one that suits the new taskbar.
+            WindowEvent::ThemeChanged(_) => repaint_tray(window.app_handle()),
             // Flyout behaviour: clicking anywhere outside dismisses the panel.
             WindowEvent::Focused(false) => {
                 let _ = window.hide();

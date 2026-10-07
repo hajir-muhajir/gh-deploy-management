@@ -3,6 +3,7 @@ import { PreviewBackdrop } from "./components/PreviewBackdrop";
 import { FlyoutPanel } from "./components/flyout/FlyoutPanel";
 import { useIsTauri } from "./hooks/useIsTauri";
 import { useTheme } from "./hooks/useTheme";
+import type { TrayBadge } from "./types";
 
 function App() {
   const theme = useTheme();
@@ -10,9 +11,9 @@ function App() {
 
   // Inside Tauri the OS shows/hides the window, so the panel is always "open".
   const [open, setOpen] = useState(true);
-  const [badgeCount, setBadgeCount] = useState(0);
+  const [badge, setBadge] = useState<TrayBadge | null>(null);
 
-  const onBadgeChange = useCallback((count: number) => setBadgeCount(count), []);
+  const onBadgeChange = useCallback((next: TrayBadge | null) => setBadge(next), []);
 
   const panel = (
     <FlyoutPanel
@@ -36,7 +37,7 @@ function App() {
         <PreviewBackdrop
           open={open}
           onToggle={() => setOpen((v) => !v)}
-          badgeCount={badgeCount}
+          badge={badge}
         >
           {panel}
         </PreviewBackdrop>

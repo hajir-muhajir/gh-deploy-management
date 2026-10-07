@@ -25,7 +25,7 @@ import { useRuns } from "../../hooks/useRuns";
 import type { useTheme } from "../../hooks/useTheme";
 import { useToast } from "../../hooks/useToast";
 import { useWorkflows } from "../../hooks/useWorkflows";
-import type { PrFilterId, Repo, ViewId } from "../../types";
+import type { PrFilterId, Repo, TrayBadge, ViewId } from "../../types";
 
 interface FlyoutPanelProps {
   theme: ReturnType<typeof useTheme>;
@@ -33,8 +33,8 @@ interface FlyoutPanelProps {
   open: boolean;
   /** Anchors the panel bottom-right like the design; off inside the Tauri window. */
   anchored: boolean;
-  /** Called with the failing + review-requested total so the backdrop can badge the tray. */
-  onBadgeChange?: (count: number) => void;
+  /** Mirrors what the real tray icon shows, for the browser preview's taskbar. */
+  onBadgeChange?: (badge: TrayBadge | null) => void;
 }
 
 export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPanelProps) {
@@ -112,8 +112,27 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
     );
   }, [repo, failingCount, runsState.loading]);
 
-  const badgeCount = failingCount + reviewCount;
-  useEffect(() => onBadgeChange?.(badgeCount), [badgeCount, onBadgeChange]);
+  const running = runs.some((r) => r.status === "running" || r.status === "queued");
+
+  // Raw counts: the priority between them is decided in Rust, where it is
+  // unit-tested, so both sides cannot drift apart.
+  useEffect(() => {
+    if (!isTauri) return;
+    void api.setTrayState(failingCount, reviewCount, running).catch(() => {
+      /* the tray is cosmetic; a failure here must not disturb the panel */
+    });
+  }, [isTauri, failingCount, reviewCount, running]);
+
+  // The preview taskbar shows what the tray would, same priority as `resolve`
+  // in src-tauri/src/tray.rs.
+  const badge: TrayBadge | null =
+    failingCount > 0
+      ? { count: failingCount, tone: "failing" }
+      : reviewCount > 0
+        ? { count: reviewCount, tone: "review" }
+        : null;
+  const badgeKey = badge ? `${badge.tone}:${badge.count}` : "";
+  useEffect(() => onBadgeChange?.(badge), [badgeKey, onBadgeChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // What the footer means by "synced": the two sets the timer keeps current.
   // Including releases here would report the age of data that never ticks.

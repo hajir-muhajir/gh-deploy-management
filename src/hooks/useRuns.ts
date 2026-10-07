@@ -6,6 +6,8 @@ export interface UseRuns {
   runs: RunInfo[];
   loading: boolean;
   error: ApiError | null;
+  /** ISO time of the last *successful* fetch; drives the footer. */
+  syncedAt: string | null;
   refresh: () => void;
   /** Cancel a run, then refetch so the list reflects the new state. */
   cancel: (runId: number) => Promise<void>;
@@ -17,6 +19,7 @@ export function useRuns(fullName: string | null, enabled: boolean): UseRuns {
   const [runs, setRuns] = useState<RunInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -34,6 +37,9 @@ export function useRuns(fullName: string | null, enabled: boolean): UseRuns {
         if (!alive) return;
         setRuns(list);
         setError(null);
+        // Only on success: a failed refresh must not make stale
+        // data look freshly fetched.
+        setSyncedAt(new Date().toISOString());
       })
       .catch((caught) => alive && setError(api.toApiError(caught)))
       .finally(() => alive && setLoading(false));
@@ -62,5 +68,5 @@ export function useRuns(fullName: string | null, enabled: boolean): UseRuns {
   const cancel = useCallback((runId: number) => act(runId, api.cancelRun), [act]);
   const rerun = useCallback((runId: number) => act(runId, api.rerunRun), [act]);
 
-  return { runs, loading, error, refresh, cancel, rerun };
+  return { runs, loading, error, syncedAt, refresh, cancel, rerun };
 }

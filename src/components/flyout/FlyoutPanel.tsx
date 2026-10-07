@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "./EmptyState";
 import { FlyoutFooter } from "./FlyoutFooter";
 import { FlyoutHeader } from "./FlyoutHeader";
@@ -13,10 +13,13 @@ import { RunTab } from "../tabs/RunTab";
 import { SettingsTab } from "../tabs/SettingsTab";
 import * as api from "../../lib/github";
 import type { DispatchWorkflow } from "../../lib/github";
+import { intervalMs, useAutoRefresh } from "../../hooks/useAutoRefresh";
 import { useDispatchable } from "../../hooks/useDispatchable";
+import { useFlyoutShown } from "../../hooks/useFlyoutShown";
 import { useGitHubAuth } from "../../hooks/useGitHubAuth";
 import { usePulls } from "../../hooks/usePulls";
 import { useReleases } from "../../hooks/useReleases";
+import { useIsTauri } from "../../hooks/useIsTauri";
 import { useRepos } from "../../hooks/useRepos";
 import { useRuns } from "../../hooks/useRuns";
 import type { useTheme } from "../../hooks/useTheme";
@@ -35,6 +38,7 @@ interface FlyoutPanelProps {
 }
 
 export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPanelProps) {
+  const isTauri = useIsTauri();
   const auth = useGitHubAuth();
   const connected = auth.status === "connected";
   const repos = useRepos(connected);
@@ -111,6 +115,43 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   const badgeCount = failingCount + reviewCount;
   useEffect(() => onBadgeChange?.(badgeCount), [badgeCount, onBadgeChange]);
 
+  // What the footer means by "synced": the two sets the timer keeps current.
+  // Including releases here would report the age of data that never ticks.
+  // ISO strings sort lexicographically, so the last one is the newest.
+  const synced = [runsState.syncedAt, pulls.syncedAt]
+    .filter((at): at is string => at !== null)
+    .sort();
+  const syncedAt = synced.length > 0 ? synced[synced.length - 1] : null;
+
+  const autoRefresh = useAutoRefresh();
+  const period = intervalMs(autoRefresh.interval);
+
+  const refreshLive = useCallback(() => {
+    runsState.refresh();
+    pulls.refresh();
+  }, [runsState.refresh, pulls.refresh]);
+
+  const refreshAll = useCallback(() => {
+    setSpin((s) => s + 1);
+    repos.reload();
+    workflows.reload();
+    releases.refresh();
+    // A no-op unless the Run tab is open; the hook is gated on that.
+    dispatchable.reload();
+    refreshLive();
+  }, [repos.reload, workflows.reload, releases.refresh, dispatchable.reload, refreshLive]);
+
+  // Only runs and pull requests tick: they are what the badge is made of, and
+  // the rest barely changes between manual refreshes.
+  useEffect(() => {
+    if (!connected || period === null) return;
+    const id = setInterval(refreshLive, period);
+    return () => clearInterval(id);
+  }, [connected, period, refreshLive]);
+
+  // Opening the flyout is the one moment worth paying for everything.
+  useFlyoutShown(isTauri && connected, refreshAll);
+
   /**
    * Starts a workflow for real. GitHub needs a few seconds before the new run
    * shows up in the runs list, so the Actions tab is refreshed rather than
@@ -153,6 +194,8 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
       activeRepoName={repo?.fullName ?? null}
       themePreference={theme.preference}
       onThemeChange={theme.setPreference}
+      refreshInterval={autoRefresh.interval}
+      onRefreshIntervalChange={autoRefresh.setInterval}
       accent={theme.accent}
       onAccentChange={theme.setAccent}
     />
@@ -257,16 +300,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
           repo={repo}
           repoUrl={repoUrl}
           spinKey={spin}
-          onRefresh={() => {
-            setSpin((s) => s + 1);
-            repos.reload();
-            workflows.reload();
-            runsState.refresh();
-            releases.refresh();
-            pulls.refresh();
-            // A no-op unless the Run tab is open; the hook is gated on that.
-            dispatchable.reload();
-          }}
+          onRefresh={refreshAll}
           onToggleMenu={() => setMenuOpen((m) => !m)}
           onOpenSettings={() => {
             setView("settings");
@@ -309,7 +343,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
 
       <div className="relative flex-1 overflow-auto px-1 pb-2">{renderContent()}</div>
 
-      <FlyoutFooter repoUrl={repoUrl} />
+      <FlyoutFooter repoUrl={repoUrl} syncedAt={syncedAt} />
       <Toast message={message} />
     </div>
   );

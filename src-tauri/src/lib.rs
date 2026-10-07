@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt};
 
 use github::{
@@ -57,6 +57,11 @@ fn show_flyout(app: &AppHandle) {
 
     let _ = window.show();
     let _ = window.set_focus();
+
+    // The webview stays alive while hidden, so without this the panel would
+    // show whatever was loaded the last time it was open. A timer cannot cover
+    // it: WebView2 may throttle timers in a hidden window.
+    let _ = window.emit("flyout-shown", ());
 }
 
 fn toggle_flyout(app: &AppHandle) {

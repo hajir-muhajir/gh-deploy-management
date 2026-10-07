@@ -7,7 +7,7 @@ import { Toggle } from "../ui/Toggle";
 import type { GitHubAuth } from "../../hooks/useGitHubAuth";
 import type { UseRepos } from "../../hooks/useRepos";
 import type { UseWorkflows } from "../../hooks/useWorkflows";
-import type { AccentId, ThemePreference } from "../../types";
+import type { AccentId, RefreshInterval, ThemePreference } from "../../types";
 
 interface SettingsTabProps {
   auth: GitHubAuth;
@@ -21,6 +21,9 @@ interface SettingsTabProps {
   workflows: UseWorkflows;
   /** Null until a repository is selected; drives the empty copy below. */
   activeRepoName: string | null;
+
+  refreshInterval: RefreshInterval;
+  onRefreshIntervalChange: (value: RefreshInterval) => void;
 
   themePreference: ThemePreference;
   onThemeChange: (value: ThemePreference) => void;
@@ -261,6 +264,26 @@ export function SettingsTab(props: SettingsTabProps) {
             : props.activeRepoName
               ? `From ${props.activeRepoName}`
               : ""}
+        </span>
+      </Section>
+
+      <Section title="Refresh">
+        <div className={clsx(CARD, "p-3")}>
+          <SegmentedControl<RefreshInterval>
+            options={[
+              { value: "off", label: "Off" },
+              { value: "1m", label: "1m" },
+              { value: "5m", label: "5m" },
+              { value: "15m", label: "15m" },
+            ]}
+            value={props.refreshInterval}
+            onChange={props.onRefreshIntervalChange}
+          />
+        </div>
+        <span className="pl-1 text-[11px] text-fg2">
+          {props.refreshInterval === "off"
+            ? "Runs and pull requests only reload when you press refresh."
+            : "Runs and pull requests reload on their own. Releases, workflows and the repository list only reload when you press refresh or reopen the panel."}
         </span>
       </Section>
 

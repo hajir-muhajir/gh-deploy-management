@@ -8,6 +8,8 @@ export interface UsePulls {
   hasMore: boolean;
   loading: boolean;
   error: ApiError | null;
+  /** ISO time of the last *successful* fetch; drives the footer. */
+  syncedAt: string | null;
   refresh: () => void;
 }
 
@@ -23,6 +25,7 @@ export function usePulls(fullName: string | null, enabled: boolean): UsePulls {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -42,6 +45,9 @@ export function usePulls(fullName: string | null, enabled: boolean): UsePulls {
         setPulls(page.pulls);
         setHasMore(page.hasMore);
         setError(null);
+        // Only on success: a failed refresh must not make stale
+        // data look freshly fetched.
+        setSyncedAt(new Date().toISOString());
       })
       .catch((caught) => alive && setError(api.toApiError(caught)))
       .finally(() => alive && setLoading(false));
@@ -52,5 +58,5 @@ export function usePulls(fullName: string | null, enabled: boolean): UsePulls {
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
-  return { pulls, hasMore, loading, error, refresh };
+  return { pulls, hasMore, loading, error, syncedAt, refresh };
 }

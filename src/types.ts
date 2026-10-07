@@ -20,3 +20,6 @@ export type PrFilterId = "open" | "draft" | "review";
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 export type AccentId = "blue" | "indigo" | "graphite";
+
+/** How often runs and pull requests are refetched on their own. */
+export type RefreshInterval = "off" | "1m" | "5m" | "15m";

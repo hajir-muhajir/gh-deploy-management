@@ -11,8 +11,9 @@ import { PullRequestsTab } from "../tabs/PullRequestsTab";
 import { ReleasesTab } from "../tabs/ReleasesTab";
 import { RunTab } from "../tabs/RunTab";
 import { SettingsTab } from "../tabs/SettingsTab";
-import { BRANCHES, PULL_REQUESTS, WORKFLOWS, defaultValues, makeReleases } from "../../data/dummy";
+import { BRANCHES, PULL_REQUESTS, WORKFLOWS, defaultValues } from "../../data/dummy";
 import { useGitHubAuth } from "../../hooks/useGitHubAuth";
+import { useReleases } from "../../hooks/useReleases";
 import { useRepos } from "../../hooks/useRepos";
 import { useRuns } from "../../hooks/useRuns";
 import type { useTheme } from "../../hooks/useTheme";
@@ -66,6 +67,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
 
   const workflows = useWorkflows(activeFullName, connected);
   const runsState = useRuns(activeFullName, connected);
+  const releases = useReleases(activeFullName, connected);
 
   const runs = useMemo(
     () => runsState.runs.filter((run) => !workflows.hiddenWorkflowIds.has(run.workflowId)),
@@ -106,8 +108,6 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
       prev[repo.fullName] === failingCount ? prev : { ...prev, [repo.fullName]: failingCount },
     );
   }, [repo, failingCount, runsState.loading]);
-
-  const releases = useMemo(() => (repo ? makeReleases(repo) : []), [repo]);
 
   // The default branch is not always "main", so put the repo's own first and
   // drop it from the placeholder list to avoid a duplicate option.
@@ -196,7 +196,17 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
 
     switch (view) {
       case "releases":
-        return <ReleasesTab releases={releases} repoUrl={repoUrl ?? ""} onCopy={copy} />;
+        return (
+          <ReleasesTab
+            releases={releases.releases}
+            hasMore={releases.hasMore}
+            loading={releases.loading}
+            error={releases.error}
+            repoUrl={repoUrl ?? ""}
+            onCopy={copy}
+            onNotice={showToast}
+          />
+        );
       case "actions":
         return (
           <ActionsTab
@@ -252,6 +262,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
             repos.reload();
             workflows.reload();
             runsState.refresh();
+            releases.refresh();
           }}
           onToggleMenu={() => setMenuOpen((m) => !m)}
           onOpenSettings={() => {

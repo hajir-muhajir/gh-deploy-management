@@ -1,11 +1,4 @@
-import type {
-  CheckStatus,
-  InputValue,
-  PullRequest,
-  Release,
-  Repo,
-  Workflow,
-} from "../types";
+import type { CheckStatus, InputValue, PullRequest, Workflow } from "../types";
 
 export const WORKFLOWS: Workflow[] = [
   {
@@ -56,33 +49,6 @@ export const CHECK_STATES: Record<CheckStatus, { color: string; label: string }>
   failure: { color: "bg-red-dot", label: "Checks failed" },
   pending: { color: "bg-orange-dot", label: "Checks running" },
 };
-
-/**
- * Stable per-repo seed so the placeholder Releases content differs between
- * repositories and stays the same across renders. Replaced once that tab is
- * wired to the real API.
- */
-function seedOf(fullName: string): number {
-  let hash = 0;
-  for (const char of fullName) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return hash % 1000;
-}
-
-function versionOf(repo: Repo): [number, number, number] {
-  const seed = seedOf(repo.fullName);
-  return [1 + (seed % 3), 1 + (seed % 9), seed % 10];
-}
-
-export function makeReleases(repo: Repo): Release[] {
-  const [M, m, p] = versionOf(repo);
-  return [
-    { tag: `v${M}.${m}.${p}`, name: "Faster cold starts", when: "4d ago", author: "rizky", latest: true, notes: ["Lazy-load route bundles", "Warm caches on deploy", "Fix memory leak in session store"] },
-    { tag: `v${M}.${m}.0`, name: "Workspace sharing", when: "Sep 26", author: "ayu", notes: ["Invite members by email", "Shared workspace settings"] },
-    { tag: `v${M}.${m}.0-rc.2`, name: "Workspace sharing RC 2", when: "Sep 22", author: "ayu", pre: true, notes: ["Release candidate for workspace sharing"] },
-    { tag: `v${M}.${m - 1}.7`, name: "Auth refresh patch", when: "Sep 12", author: "dimas", notes: ["Fix token refresh on slow networks"] },
-    { tag: `v${M}.${m - 1}.6`, name: "Dependency updates", when: "Aug 30", author: "renovate", notes: ["Bump runtime dependencies"] },
-  ];
-}
 
 /** Default input values for a workflow, keyed by input key. */
 export function defaultValues(workflow: Workflow): Record<string, InputValue> {

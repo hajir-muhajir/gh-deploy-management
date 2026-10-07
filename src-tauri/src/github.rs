@@ -19,6 +19,9 @@ const MAX_PAGES: usize = 5;
 /// the most recent ones.
 const RUNS_PER_PAGE: usize = 20;
 
+/// The Releases tab shows the most recent page and links out for the rest.
+const RELEASES_PER_PAGE: usize = 20;
+
 // ── Errors ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -156,6 +159,45 @@ pub struct RunInfo {
     pub updated_at: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInfo {
+    pub id: u64,
+    pub tag: String,
+    pub name: String,
+    /// Markdown release notes, straight from GitHub.
+    pub body: String,
+    pub draft: bool,
+    pub prerelease: bool,
+    /// Derived, not an API field — see `mark_latest`.
+    pub latest: bool,
+    pub author: String,
+    /// ISO; a draft has no publish date, so it falls back to created_at.
+    pub published_at: String,
+    pub html_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleasesPage {
+    pub releases: Vec<ReleaseInfo>,
+    /// Whether GitHub reported further pages, so the UI can offer a way out.
+    pub has_more: bool,
+}
+
+/// Flags the release GitHub would call "latest": the first non-draft,
+/// non-prerelease entry of a list already sorted by created_at descending.
+/// That matches `/releases/latest` without the extra request — and without its
+/// 404 on repositories that have no published release.
+fn mark_latest(releases: &mut [ReleaseInfo]) {
+    if let Some(release) = releases
+        .iter_mut()
+        .find(|release| !release.draft && !release.prerelease)
+    {
+        release.latest = true;
+    }
+}
+
 /// Collapses GitHub's `status` + `conclusion` pair into the five states the UI
 /// draws. Keeping this in one place stops the two halves drifting apart.
 fn run_status(status: &str, conclusion: Option<&str>) -> &'static str {
@@ -246,6 +288,39 @@ struct RawRun {
 #[derive(Deserialize)]
 struct RawRunList {
     workflow_runs: Vec<RawRun>,
+}
+
+#[derive(Deserialize)]
+struct RawRelease {
+    id: u64,
+    tag_name: String,
+    name: Option<String>,
+    body: Option<String>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    author: Option<RawActor>,
+    published_at: Option<String>,
+    created_at: String,
+    html_url: String,
+}
+
+impl From<RawRelease> for ReleaseInfo {
+    fn from(raw: RawRelease) -> Self {
+        Self {
+            id: raw.id,
+            tag: raw.tag_name,
+            name: raw.name.unwrap_or_default(),
+            body: raw.body.unwrap_or_default(),
+            draft: raw.draft,
+            prerelease: raw.prerelease,
+            latest: false,
+            author: raw.author.map(|a| a.login).unwrap_or_default(),
+            published_at: raw.published_at.unwrap_or(raw.created_at),
+            html_url: raw.html_url,
+        }
+    }
 }
 
 impl From<RawWorkflow> for WorkflowInfo {
@@ -474,6 +549,26 @@ impl GitHub {
         Ok(list.workflow_runs.into_iter().map(RunInfo::from).collect())
     }
 
+    /// The newest page of releases. Drafts are kept here so this layer stays a
+    /// faithful mirror of the API; the UI decides whether to show them.
+    pub async fn list_releases(&self, owner: &str, name: &str) -> Result<ReleasesPage, ApiError> {
+        let response = self
+            .get(&format!(
+                "/repos/{owner}/{name}/releases?per_page={RELEASES_PER_PAGE}"
+            ))
+            .await?;
+        if !response.status().is_success() {
+            return Err(error_from(response).await);
+        }
+
+        let has_more = next_page_url(&response).is_some();
+        let raw: Vec<RawRelease> = response.json().await.map_err(ApiError::network)?;
+        let mut releases: Vec<ReleaseInfo> = raw.into_iter().map(ReleaseInfo::from).collect();
+        mark_latest(&mut releases);
+
+        Ok(ReleasesPage { releases, has_more })
+    }
+
     pub async fn cancel_run(&self, owner: &str, name: &str, run_id: u64) -> Result<(), ApiError> {
         self.run_command(owner, name, run_id, "cancel").await
     }
@@ -664,6 +759,91 @@ mod tests {
         }
     }
 
+    fn release(tag: &str, draft: bool, prerelease: bool) -> ReleaseInfo {
+        ReleaseInfo {
+            id: 0,
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            draft,
+            prerelease,
+            latest: false,
+            author: String::new(),
+            published_at: String::new(),
+            html_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn marks_only_the_first_published_release_as_latest() {
+        // Index 0 is a draft and index 1 a prerelease, so neither qualifies —
+        // picking the newest entry outright would flag the wrong one.
+        let mut releases = vec![
+            release("v2.0.0-draft", true, false),
+            release("v2.0.0-rc.1", false, true),
+            release("v1.9.0", false, false),
+            release("v1.8.0", false, false),
+        ];
+        mark_latest(&mut releases);
+
+        let flagged: Vec<&str> = releases
+            .iter()
+            .filter(|r| r.latest)
+            .map(|r| r.tag.as_str())
+            .collect();
+        assert_eq!(flagged, ["v1.9.0"], "exactly one release, the newest published one");
+    }
+
+    #[test]
+    fn marks_nothing_when_every_release_is_a_draft_or_prerelease() {
+        let mut releases = vec![release("v1.0.0-rc.1", false, true), release("v1.0.0", true, false)];
+        mark_latest(&mut releases);
+        assert!(releases.iter().all(|r| !r.latest));
+    }
+
+    #[tokio::test]
+    async fn lists_real_releases_with_one_latest() {
+        let Some(token) = token() else {
+            eprintln!("skipped: no GITHUB_TOKEN");
+            return;
+        };
+        let (owner, name) = split(FIXTURE);
+        let page = GitHub::new(&token).unwrap().list_releases(owner, name).await.unwrap();
+
+        assert!(!page.releases.is_empty(), "fixture repo should have releases");
+        assert!(page.releases.len() <= RELEASES_PER_PAGE, "must respect the page cap");
+        assert!(page.has_more, "fixture repo has far more releases than one page");
+
+        assert_eq!(
+            page.releases.iter().filter(|r| r.latest).count(),
+            1,
+            "exactly one release should carry the Latest badge"
+        );
+
+        for r in &page.releases {
+            assert!(!r.tag.is_empty(), "release {} has no tag", r.id);
+            assert!(!r.html_url.is_empty(), "release {} has no link", r.tag);
+            assert!(!r.published_at.is_empty(), "release {} has no date", r.tag);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_repository_without_releases_is_empty_not_an_error() {
+        let Some(token) = token() else {
+            eprintln!("skipped: no GITHUB_TOKEN");
+            return;
+        };
+        // Unlike /releases/latest, which answers 404 here.
+        let page = GitHub::new(&token)
+            .unwrap()
+            .list_releases("Indo-Taichen", "mps-project")
+            .await
+            .expect("an empty release list is a success, not a failure");
+
+        assert!(page.releases.is_empty());
+        assert!(!page.has_more);
+    }
+
     #[test]
     fn maps_github_status_pairs_onto_ui_states() {
         assert_eq!(run_status("in_progress", None), "running");
@@ -744,6 +924,20 @@ mod tests {
             "actor", "event", "htmlUrl", "startedAt", "updatedAt",
         ] {
             assert!(json.get(key).is_some(), "RunInfo is missing `{key}`");
+        }
+
+        let json = serde_json::to_value(ReleasesPage {
+            releases: vec![release("v1.0.0", false, false)],
+            has_more: true,
+        })
+        .unwrap();
+        assert!(json.get("hasMore").is_some(), "ReleasesPage is missing `hasMore`");
+        let first = &json["releases"][0];
+        for key in [
+            "id", "tag", "name", "body", "draft", "prerelease", "latest", "author",
+            "publishedAt", "htmlUrl",
+        ] {
+            assert!(first.get(key).is_some(), "ReleaseInfo is missing `{key}`");
         }
     }
 }

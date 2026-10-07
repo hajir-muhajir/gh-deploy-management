@@ -15,16 +15,6 @@ export interface Repo {
   visible: boolean;
 }
 
-export interface Release {
-  tag: string;
-  name: string;
-  when: string;
-  author: string;
-  latest?: boolean;
-  pre?: boolean;
-  notes: string[];
-}
-
 export type WorkflowInput =
   | { key: string; label: string; type: "text"; def: string; ph?: string; hint?: string }
   | { key: string; label: string; type: "bool"; def: boolean; hint?: string }

@@ -80,6 +80,27 @@ export interface RunInfo {
   updatedAt: string;
 }
 
+export interface ReleaseInfo {
+  id: number;
+  tag: string;
+  name: string;
+  /** Markdown release notes, straight from GitHub. May be empty. */
+  body: string;
+  draft: boolean;
+  prerelease: boolean;
+  /** Derived in Rust: the newest non-draft, non-prerelease release. */
+  latest: boolean;
+  author: string;
+  publishedAt: string;
+  htmlUrl: string;
+}
+
+export interface ReleasesPage {
+  releases: ReleaseInfo[];
+  /** GitHub reported further pages, so the list on screen is partial. */
+  hasMore: boolean;
+}
+
 export interface ReposPage {
   repos: RepoInfo[];
   truncated: boolean;
@@ -148,6 +169,10 @@ export function listWorkflows(owner: string, name: string) {
 
 export function listRuns(owner: string, name: string) {
   return call<RunInfo[]>("github_list_runs", { owner, name });
+}
+
+export function listReleases(owner: string, name: string) {
+  return call<ReleasesPage>("github_list_releases", { owner, name });
 }
 
 /** Needs the Actions *write* permission; rejects with kind "forbidden" without it. */

@@ -9,7 +9,9 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt};
 
-use github::{ApiError, GitHub, RepoInfo, ReposPage, RunInfo, TokenInfo, WorkflowInfo};
+use github::{
+    ApiError, GitHub, ReleasesPage, RepoInfo, ReposPage, RunInfo, TokenInfo, WorkflowInfo,
+};
 
 const MAIN_WINDOW: &str = "main";
 
@@ -149,6 +151,11 @@ async fn github_list_runs(owner: String, name: String) -> Result<Vec<RunInfo>, A
 }
 
 #[tauri::command]
+async fn github_list_releases(owner: String, name: String) -> Result<ReleasesPage, ApiError> {
+    client_from_keychain()?.list_releases(&owner, &name).await
+}
+
+#[tauri::command]
 async fn github_cancel_run(owner: String, name: String, run_id: u64) -> Result<(), ApiError> {
     client_from_keychain()?.cancel_run(&owner, &name, run_id).await
 }
@@ -173,6 +180,7 @@ pub fn run() {
             github_probe_actions,
             github_list_workflows,
             github_list_runs,
+            github_list_releases,
             github_cancel_run,
             github_rerun_run,
         ])

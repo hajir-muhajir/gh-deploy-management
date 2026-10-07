@@ -6,6 +6,7 @@ import { FlyoutHeader } from "./FlyoutHeader";
 import { RepoSwitcherMenu } from "./RepoSwitcherMenu";
 import { TabBar } from "./TabBar";
 import { Toast } from "./Toast";
+import { UpdateBanner } from "./UpdateBanner";
 import { ActionsTab } from "../tabs/ActionsTab";
 import { PullRequestsTab } from "../tabs/PullRequestsTab";
 import { ReleasesTab } from "../tabs/ReleasesTab";
@@ -24,6 +25,7 @@ import { useRepos } from "../../hooks/useRepos";
 import { useRuns } from "../../hooks/useRuns";
 import type { useTheme } from "../../hooks/useTheme";
 import { useToast } from "../../hooks/useToast";
+import { useUpdater } from "../../hooks/useUpdater";
 import { useWorkflows } from "../../hooks/useWorkflows";
 import type { PrFilterId, Repo, TrayBadge, ViewId } from "../../types";
 
@@ -53,6 +55,7 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
   const [showToken, setShowToken] = useState(false);
 
   const { message, showToast, copy } = useToast();
+  const updater = useUpdater();
 
   const visibleRepos = useMemo(() => repos.tracked.filter((r) => r.visible), [repos.tracked]);
 
@@ -359,6 +362,8 @@ export function FlyoutPanel({ theme, open, anchored, onBadgeChange }: FlyoutPane
         failingCount={failingCount}
         reviewCount={reviewCount}
       />
+
+      <UpdateBanner updater={updater} />
 
       <div className="relative flex-1 overflow-auto px-1 pb-2">{renderContent()}</div>
 

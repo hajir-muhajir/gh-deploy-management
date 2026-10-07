@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "positioner:default"
+    "positioner:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

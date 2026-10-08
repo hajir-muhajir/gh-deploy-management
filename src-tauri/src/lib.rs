@@ -48,6 +48,11 @@ pub fn run() {
             commands::set_autostart,
         ])
         .setup(|app| {
+            // A menu bar extra, not a regular app: no Dock icon and no app menu,
+            // and the flyout can take focus without the app being "activated".
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             tray::setup(app)?;
             Ok(())
         })

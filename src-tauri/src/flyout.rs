@@ -71,11 +71,16 @@ pub fn show(app: &AppHandle) {
     };
 
     // TrayCenter puts the panel *above* the icon (TrayBottomCenter would put it
-    // below, which runs off-screen on a bottom taskbar). The constrained variant
+    // below, which runs off-screen on a bottom taskbar). The macOS menu bar is at
+    // the top, so there it is the other way round. The constrained variant
     // clamps the result to the monitor so the panel is never cut off at an edge.
     // It errors until the tray has reported its position, hence the fallback.
-    if window.move_window_constrained(Position::TrayCenter).is_err() {
-        let _ = window.move_window(Position::BottomRight);
+    #[cfg(target_os = "macos")]
+    let (anchor, fallback) = (Position::TrayBottomCenter, Position::TopRight);
+    #[cfg(not(target_os = "macos"))]
+    let (anchor, fallback) = (Position::TrayCenter, Position::BottomRight);
+    if window.move_window_constrained(anchor).is_err() {
+        let _ = window.move_window(fallback);
     }
 
     let _ = window.show();

@@ -43,11 +43,47 @@ jobs:
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
-  release:
-    name: Build Windows installers
+  # The release starts as a draft so the platforms can upload into it in
+  # parallel. A draft has no tag and is invisible to releases/latest, so the
+  # updater never sees a release that only has one platform's installers.
+  create:
+    name: Create draft release
     needs: check
     if: needs.check.outputs.should_release == 'true'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.id }}
+    steps:
+      - id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: v${{ needs.check.outputs.version }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$VERSION" -f target_commitish="$GITHUB_SHA" -f name="$VERSION" \
+            -f body="Windows and macOS installers for $VERSION." -F draft=true --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [check, create]
+    strategy:
+      # One platform failing must not leave the other publishing into a release
+      # that will never go out.
+      fail-fast: true
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            rust-targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
+          # One universal build covers Apple Silicon and Intel Macs, and gives
+          # the updater both darwin platforms from a single artifact.
+          - name: macOS
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +94,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.rust-targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -67,17 +103,24 @@ jobs:
       - run: npm ci
 
       # Builds the frontend (`npm run build`, so a tsc error fails the release),
-      # bundles the NSIS and MSI installers, signs the updater artifacts and
-      # publishes the tag, the release and latest.json in one step.
+      # bundles the platform's installers, signs the updater artifacts and
+      # uploads them plus its entries in latest.json to the draft.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v${{ needs.check.outputs.version }}
-          releaseName: v${{ needs.check.outputs.version }}
-          releaseBody: Windows installers for v${{ needs.check.outputs.version }}.
-          releaseDraft: false
-          prerelease: false
-          args: --target x86_64-pc-windows-msvc
+          releaseId: ${{ needs.create.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  publish:
+    name: Publish release
+    needs: [create, build]
+    runs-on: ubuntu-latest
+    steps:
+      # Publishing is what creates the tag, which is also what makes the next
+      # run of `check` treat this version as shipped.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/${{ needs.create.outputs.release_id }}" -F draft=false

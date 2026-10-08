@@ -65,15 +65,47 @@ pub fn tooltip(badge: Badge) -> String {
     }
 }
 
+/// On macOS the idle glyph is a template image, so the menu bar recolours it
+/// itself. The others carry colour, which a template would throw away.
+fn as_template(badge: Badge) -> bool {
+    cfg!(target_os = "macos") && badge == Badge::Idle
+}
+
+/// The colour of the menu bar itself. On macOS it cannot be read off the system
+/// theme: in light mode the translucent bar still turns dark over a dark
+/// wallpaper, and a dark glyph disappears into it. The status item's button
+/// knows what it is drawn on.
+#[cfg(target_os = "macos")]
+fn menu_bar_theme(tray: &tauri::tray::TrayIcon) -> Option<Theme> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua};
+    use objc2_foundation::NSArray;
+
+    tray.with_inner_tray_icon(|inner| {
+        let mtm = MainThreadMarker::new()?;
+        let button = inner.ns_status_item()?.button(mtm)?;
+        let (aqua, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+        let names = NSArray::from_slice(&[aqua, dark]);
+        let best = button.effectiveAppearance().bestMatchFromAppearancesWithNames(&names)?;
+        Some(if &*best == dark { Theme::Dark } else { Theme::Light })
+    })
+    .ok()
+    .flatten()
+}
+
 /// Repaints the tray icon. Silent on failure: a tray that cannot be updated is
 /// not worth taking the app down for.
 pub fn apply(app: &AppHandle, theme: Theme, state: TrayState) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
+    #[cfg(target_os = "macos")]
+    let theme = menu_bar_theme(&tray).unwrap_or(theme);
     let badge = resolve(state);
     if let Ok(image) = Image::from_bytes(icon_bytes(theme, badge)) {
-        let _ = tray.set_icon(Some(image));
+        // One call, not set_icon + set_icon_as_template: the latter re-sets the
+        // same NSImage, which the button does not redraw.
+        let _ = tray.set_icon_with_as_template(Some(image), as_template(badge));
     }
     let _ = tray.set_tooltip(Some(tooltip(badge)));
 }
@@ -88,6 +120,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(idle)
+        .icon_as_template(as_template(Badge::Idle))
         .tooltip(tooltip(Badge::Idle))
         .menu(&menu)
         .show_menu_on_left_click(false)

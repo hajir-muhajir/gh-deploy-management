@@ -1,6 +1,6 @@
 [package]
 name = "gh-deploy-management"
-version = "0.1.0"
+version = "0.2.0"
 description = "GitHub deploy management flyout for the system tray"
 authors = ["you"]
 edition = "2021"
@@ -30,6 +30,12 @@ serde_json = "1"
 keyring = "4"
 reqwest = { version = "0.13", features = ["json"] }
 yaml-rust2 = { version = "0.13", default-features = false }
+
+# Reading the menu bar's appearance off the tray's NSStatusItem (see tray::menu_bar_theme).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSAppearance", "NSStatusItem", "NSButton", "NSControl", "NSView", "NSResponder"] }
 
 
 [dev-dependencies]
